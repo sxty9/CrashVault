@@ -6,15 +6,9 @@ window.CRASHVAULT_REGISTRY = {
       "name": "BWL Klausurvorbereitung",
       "color": "#38bdf8",
       "createdAt": "2026-06-02T17:51:56.892Z"
-    },
-    {
-      "id": "test",
-      "name": "test",
-      "color": "#a78bfa",
-      "createdAt": "2026-06-02T18:35:52.817Z"
     }
   ],
   "_meta": {
-    "lastSaved": "2026-06-02T18:35:55.992Z"
+    "lastSaved": "2026-06-02T18:36:43.612Z"
   }
 };
