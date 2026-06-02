@@ -27,7 +27,13 @@ window.CRASHVAULT_MODULE = {
               }
             ],
             "id": "imc4ee9j3rto",
-            "cards": []
+            "cards": [
+              {
+                "id": "m94piar1mmzp",
+                "front": "dsds",
+                "back": "sdsds"
+              }
+            ]
           },
           {
             "title": "Nutzwertanalyse",
@@ -449,6 +455,6 @@ window.CRASHVAULT_MODULE = {
     }
   ],
   "_meta": {
-    "lastSaved": "2026-06-02T17:51:56.891Z"
+    "lastSaved": "2026-06-02T18:45:47.554Z"
   }
 };
