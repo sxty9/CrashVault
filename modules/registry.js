@@ -11,10 +11,10 @@ window.CRASHVAULT_REGISTRY = {
       "id": "rechnernetze",
       "name": "Rechnernetze",
       "color": "#a78bfa",
-      "createdAt": "2026-06-02T18:43:34.071Z"
+      "createdAt": "2026-06-02T18:43:51.305Z"
     }
   ],
   "_meta": {
-    "lastSaved": "2026-06-02T18:43:36.987Z"
+    "lastSaved": "2026-06-02T18:43:54.195Z"
   }
 };
