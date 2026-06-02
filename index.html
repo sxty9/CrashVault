@@ -139,8 +139,17 @@ function render() {
         <button class="small danger" data-act="del" title="Modul löschen">✕</button>
       </div>
     `;
-    card.addEventListener("click", e => {
+    card.addEventListener("click", async e => {
       if (e.target.closest("[data-act]")) return;
+      // If the dashboard has unsaved changes (typically: this module was just
+      // added), commit them first. Otherwise the module page would load but
+      // the server has no entry for this id yet, and a back-nav loses the
+      // module entirely.
+      if (dirty) {
+        try { await save(); }
+        catch (err) { toast("Erst speichern fehlgeschlagen: " + err.message, "err"); return; }
+        if (dirty) return; // save still failed, abort nav
+      }
       window.location.href = `/module.html?id=${encodeURIComponent(m.id)}`;
     });
     card.querySelector("[data-act='rename']").addEventListener("click", e => {

@@ -346,7 +346,7 @@ $("#btnAddTile").addEventListener("click", e => {
   popup.innerHTML = `<div class="head">Kachel hinzufügen</div>`;
   for (const [type, cls] of Object.entries(window.CV_TILES || {})) {
     const b = document.createElement("button");
-    b.innerHTML = `<span class="icon">${cls.icon || "▦"}</span><span style="display:flex;flex-direction:column;align-items:flex-start;line-height:1.2;"><span>${escapeText(cls.label)}</span><span style="font-size:11px;color:var(--muted)">${escapeText(cls.description || "")}</span></span>`;
+    b.innerHTML = `<span class="icon">${cls.icon || "▦"}</span><span>${escapeText(cls.label)}</span>`;
     b.addEventListener("click", () => {
       popup.remove();
       const pos = findFreePosition(cls.defaultSize || { w: 600, h: 500 });
