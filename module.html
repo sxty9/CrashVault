@@ -16,6 +16,7 @@
   </div>
   <div class="toolbar">
     <span class="status-pill" id="statusPill">…</span>
+    <button class="ghost small" id="btnAnkiSync" title="Mit Anki synchronisieren" style="display:none">🔌 → Anki</button>
     <button class="ghost small" id="btnReload" title="Neu laden">↻</button>
     <button class="ghost small" id="btnDiscard" style="display:none">Verwerfen</button>
     <button class="primary save-btn" id="btnSave"><span class="dot"></span><span id="saveLabel">Gespeichert</span></button>
@@ -50,10 +51,11 @@
 <script src="/assets/util.js"></script>
 <script src="/tiles/topic-list.js"></script>
 <script src="/tiles/spruch-list.js"></script>
+<script src="/features/anki-connect.js"></script>
 <script>
 "use strict";
 
-const { $, uid, escapeText, escapeAttr, toast, loading, api, apiJson, apiPostJson, autosize } = window.CV;
+const { $, uid, escapeText, escapeAttr, toast, loading, api, apiJson, apiPostJson, autosize, getFeatureState } = window.CV;
 
 const params = new URLSearchParams(location.search);
 const moduleId = params.get("id");
@@ -88,23 +90,22 @@ function markDirty() {
 // Load / save
 // ============================================================
 async function loadFromServer() {
-  const r = await api(`/api/data?module=${encodeURIComponent(moduleId)}`);
-  const json = await r.json();
-  if (json.state && json.state.id === moduleId) {
-    state = json.state;
+  // Registry holds the authoritative module name. We always fetch it alongside
+  // the per-module data so the header reflects the dashboard rename instantly
+  // and the cached `name` field in the data file can never drift.
+  const [modJson, regJson] = await Promise.all([
+    apiJson(`/api/data?module=${encodeURIComponent(moduleId)}`),
+    apiJson("/api/registry").catch(() => ({ registry: { modules: [] } }))
+  ]);
+  const regEntry = (regJson.registry?.modules || []).find(m => m.id === moduleId);
+  if (modJson.state && Array.isArray(modJson.state.tiles)) {
+    state = modJson.state;
   } else {
-    // First load — module has no data file yet. Look up the friendly name in
-    // the registry so the header doesn't say the raw slug.
-    let friendlyName = moduleId;
-    try {
-      const reg = await apiJson("/api/registry");
-      const m = (reg.registry?.modules || []).find(x => x.id === moduleId);
-      if (m) friendlyName = m.name;
-    } catch (e) {}
-    state = { id: moduleId, name: friendlyName, tiles: [] };
+    state = { id: moduleId, name: moduleId, tiles: [] };
   }
+  state.name = regEntry?.name || state.name || moduleId;
   if (!Array.isArray(state.tiles)) state.tiles = [];
-  baseSha = json.sha || null;
+  baseSha = modJson.sha || null;
   try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ state, ts: Date.now() })); } catch (e) {}
 }
 
@@ -159,6 +160,7 @@ async function save() {
     renderAll();
     toast(fileShas.length ? `Gespeichert ✓  (+ ${fileShas.length} Datei(en))` : "Gespeichert ✓", "ok");
     setStatus("ok", "Live");
+    maybeAutoSyncToAnki();
   } catch (e) {
     dirty = true; updateSaveButton();
     if (e.status === 409) { toast(e.message, "err"); setStatus("err", "Konflikt"); }
@@ -429,8 +431,8 @@ function renderAnkiCards() {
       `;
       const frontTA = item.querySelector(".front textarea");
       const backTA  = item.querySelector(".back textarea");
-      frontTA.addEventListener("input", e => { card.front = e.target.value; autosize(frontTA); markDirty(); });
-      backTA .addEventListener("input", e => { card.back  = e.target.value; autosize(backTA);  markDirty(); });
+      frontTA.addEventListener("input", e => { card.front = e.target.value; card.mod = Date.now(); autosize(frontTA); markDirty(); });
+      backTA .addEventListener("input", e => { card.back  = e.target.value; card.mod = Date.now(); autosize(backTA);  markDirty(); });
       item.querySelector("[data-act='up']").addEventListener("click", () => moveCard(ci, -1));
       item.querySelector("[data-act='down']").addEventListener("click", () => moveCard(ci, +1));
       item.querySelector("[data-act='rm']").addEventListener("click", () => {
@@ -479,7 +481,7 @@ function moveCard(idx, delta) {
 
 $("#ankiAddCard").addEventListener("click", () => {
   if (!ankiContext) return;
-  ankiContext.topic.cards.push({ id: uid(), front: "", back: "" });
+  ankiContext.topic.cards.push({ id: uid(), front: "", back: "", mod: Date.now() });
   markDirty(); renderAnkiCards(); renderAll();
   const items = $("#ankiCards").querySelectorAll(".card-item");
   if (items.length) items[items.length - 1].querySelector("textarea").focus();
@@ -517,7 +519,62 @@ window.addEventListener("keydown", e => {
   if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); if (dirty) save(); }
 });
 
+// ============================================================
+// AnkiConnect integration (per-device feature)
+// ------------------------------------------------------------
+// The button is shown when the AnkiConnect feature is enabled in dashboard
+// settings. Clicking syncs the current module. After a successful save we
+// auto-trigger the sync if autoSyncOnSave is on. A pull (Anki→CV) sets dirty
+// again so the user can review and save the merged result.
+// ============================================================
+let ankiSyncRunning = false;
+function refreshAnkiButton() {
+  const feat = window.CV_FEATURES && window.CV_FEATURES["anki-connect"];
+  const st = feat ? getFeatureState("anki-connect") : null;
+  $("#btnAnkiSync").style.display = (feat && st && st.enabled) ? "" : "none";
+}
+
+async function syncToAnki(opts) {
+  const feat = window.CV_FEATURES && window.CV_FEATURES["anki-connect"];
+  if (!feat) return;
+  const st = getFeatureState("anki-connect");
+  if (!st.enabled) return;
+  if (ankiSyncRunning) return;
+  ankiSyncRunning = true;
+  const btn = $("#btnAnkiSync");
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = "🔌 Sync…";
+  try {
+    const result = await feat.syncModule(state, st.config, { markDirty });
+    const parts = [];
+    if (result.added)   parts.push(`+${result.added}`);
+    if (result.updated) parts.push(`↑${result.updated}`);
+    if (result.pulled)  parts.push(`↓${result.pulled}`);
+    if (result.moved)   parts.push(`⇄${result.moved}`);
+    if (result.deleted) parts.push(`✕${result.deleted}`);
+    const summary = parts.length ? parts.join(" · ") : "alles aktuell";
+    toast(`Anki: ${summary} ✓`, "ok");
+  } catch (e) {
+    if (!opts || !opts.silent) toast("Anki-Sync fehlgeschlagen: " + e.message, "err");
+  } finally {
+    ankiSyncRunning = false;
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+function maybeAutoSyncToAnki() {
+  const st = getFeatureState("anki-connect");
+  if (st.enabled && st.config.autoSyncOnSave) {
+    // Fire-and-forget; errors surface via toast but don't break the save flow.
+    syncToAnki({ silent: false });
+  }
+}
+
+$("#btnAnkiSync").addEventListener("click", () => syncToAnki());
+window.addEventListener("focus", refreshAnkiButton);
+
 (async function init() {
+  refreshAnkiButton();
   // Cache-first paint
   try {
     const cached = JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY) || "null");

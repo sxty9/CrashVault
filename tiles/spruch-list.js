@@ -29,7 +29,7 @@
 
     renderList(body, tile, ctx);
     body.querySelector("[data-act='add']").addEventListener("click", () => {
-      tile.state.items.push({ id: uid(), text: "" });
+      tile.state.items.push({ id: uid(), text: "", mod: Date.now() });
       ctx.markDirty(); renderList(body, tile, ctx);
       const tas = body.querySelectorAll("textarea");
       if (tas.length) tas[tas.length - 1].focus();
@@ -55,7 +55,7 @@
       const ta = el.querySelector("textarea");
       if (s.height) ta.style.height = s.height;
       else autosize(ta);
-      ta.addEventListener("input", e => { s.text = e.target.value; autosize(ta); ctx.markDirty(); });
+      ta.addEventListener("input", e => { s.text = e.target.value; s.mod = Date.now(); autosize(ta); ctx.markDirty(); });
       ta.addEventListener("pointerup", () => {
         const h = ta.style.height;
         if (h && h !== s.height) { s.height = h; ctx.markDirty(); }

@@ -12,6 +12,7 @@
   <h1><span class="accent">⚡</span> CrashVault</h1>
   <div class="toolbar">
     <span class="status-pill" id="statusPill">…</span>
+    <button class="ghost small" id="btnSettings" title="Einstellungen">⚙</button>
     <button class="ghost small" id="btnReload" title="Neu laden">↻</button>
     <button class="ghost small" id="btnDiscard" style="display:none">Verwerfen</button>
     <button class="primary save-btn" id="btnSave"><span class="dot"></span><span id="saveLabel">Gespeichert</span></button>
@@ -29,6 +30,20 @@
     </div>
   </div>
 </main>
+
+<dialog id="settingsDlg">
+  <h3>Einstellungen</h3>
+  <p class="dlg-sub">Per-Gerät gespeicherte Konfiguration — gilt nur in diesem Browser.</p>
+  <div class="settings-section">
+    <h4>Features</h4>
+    <div id="featureList"></div>
+  </div>
+  <div style="display:flex;justify-content:flex-end;margin-top:18px;">
+    <button id="closeSettings">Schließen</button>
+  </div>
+</dialog>
+
+<dialog id="featureConfigDlg"></dialog>
 
 <dialog id="addModuleDlg">
   <h3>Neues Modul</h3>
@@ -54,10 +69,11 @@
 </dialog>
 
 <script src="/assets/util.js"></script>
+<script src="/features/anki-connect.js"></script>
 <script>
 "use strict";
 
-const { $, uid, escapeText, escapeAttr, slugify, toast, loading, api, apiPostJson } = window.CV;
+const { $, uid, escapeText, escapeAttr, slugify, toast, loading, api, apiPostJson, getFeatureState, saveFeatureState } = window.CV;
 
 const LOCAL_CACHE_KEY = "crashvault-registry-cache";
 const COLORS = ["#38bdf8", "#a78bfa", "#4ade80", "#fbbf24", "#f87171", "#f472b6", "#22d3ee", "#fb923c"];
@@ -219,6 +235,66 @@ $("#confirmAddModule").addEventListener("click", () => {
   markDirty(); render();
 });
 $("#btnAddFirst").addEventListener("click", openAddDialog);
+
+// ============================================================
+// Settings dialog + Features
+// ============================================================
+function renderFeatureList() {
+  const list = $("#featureList");
+  list.innerHTML = "";
+  const features = window.CV_FEATURES || {};
+  if (!Object.keys(features).length) {
+    list.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:8px 0">Keine Features installiert.</div>`;
+    return;
+  }
+  for (const [id, feat] of Object.entries(features)) {
+    const st = getFeatureState(id);
+    const row = document.createElement("div");
+    row.className = "feature-row";
+    row.innerHTML = `
+      <span class="feat-icon">${feat.icon || "🧩"}</span>
+      <div class="feat-text">
+        <div class="feat-name">${escapeText(feat.label)}</div>
+        <div class="feat-desc">${escapeText(feat.description || "")}</div>
+      </div>
+      <div class="feat-actions">
+        <button class="small" data-act="config" title="Konfigurieren">⚙</button>
+        <label class="switch">
+          <input type="checkbox" ${st.enabled ? "checked" : ""}>
+          <span class="slider"></span>
+        </label>
+      </div>
+    `;
+    row.querySelector("input").addEventListener("change", e => {
+      const cur = getFeatureState(id);
+      saveFeatureState(id, { enabled: e.target.checked, config: cur.config });
+      toast(`${feat.label} ${e.target.checked ? "aktiviert" : "deaktiviert"} ✓`, "ok");
+    });
+    row.querySelector("[data-act='config']").addEventListener("click", () => openFeatureConfig(id));
+    list.appendChild(row);
+  }
+}
+
+function openFeatureConfig(featureId) {
+  const feat = (window.CV_FEATURES || {})[featureId];
+  if (!feat || typeof feat.renderConfig !== "function") {
+    toast("Dieses Feature hat keine Konfiguration", "warn");
+    return;
+  }
+  const dlg = $("#featureConfigDlg");
+  const current = getFeatureState(featureId);
+  feat.renderConfig(dlg, current.config, (next) => {
+    if (next === null) { dlg.close(); return; }
+    saveFeatureState(featureId, { enabled: current.enabled, config: next });
+    toast(`${feat.label}: Einstellungen gespeichert ✓`, "ok");
+    dlg.close();
+    renderFeatureList();
+  });
+  dlg.showModal();
+}
+
+$("#btnSettings").addEventListener("click", () => { renderFeatureList(); $("#settingsDlg").showModal(); });
+$("#closeSettings").addEventListener("click", () => $("#settingsDlg").close());
 
 // ============================================================
 // Wiring

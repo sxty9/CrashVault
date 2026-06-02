@@ -133,9 +133,38 @@
     }
   }
 
+  // ============================================================
+  // Features (Plug-in system, per-device settings in localStorage)
+  // ------------------------------------------------------------
+  // Features extend the app with capabilities. Each Feature registers itself
+  // on window.CV_FEATURES[<id>] with:
+  //   { label, icon, description, defaultConfig, renderConfig(el, config, save),
+  //     test(config) -> {ok, message}, syncModule?(moduleState, config, ctx) }
+  // Per-device state (enabled flag + config) is in localStorage so two devices
+  // can have different configurations of the same Feature.
+  const FEATURES_KEY = "crashvault-features";
+  function getAllFeatureStates() {
+    try { return JSON.parse(localStorage.getItem(FEATURES_KEY) || "{}"); } catch (e) { return {}; }
+  }
+  function getFeatureState(id) {
+    const all = getAllFeatureStates();
+    const feat = (window.CV_FEATURES || {})[id];
+    const saved = all[id];
+    return {
+      enabled: !!(saved && saved.enabled),
+      config: Object.assign({}, feat?.defaultConfig || {}, saved?.config || {})
+    };
+  }
+  function saveFeatureState(id, state) {
+    const all = getAllFeatureStates();
+    all[id] = state;
+    try { localStorage.setItem(FEATURES_KEY, JSON.stringify(all)); } catch (e) {}
+  }
+
   window.CV = {
     $, uid, deepClone, escapeText, escapeAttr, slugify,
     toast, loading, api, apiJson, apiPostJson,
-    autosize, ankiCardKey, splitSpruch, downloadApkg
+    autosize, ankiCardKey, splitSpruch, downloadApkg,
+    getFeatureState, saveFeatureState, getAllFeatureStates
   };
 })();
