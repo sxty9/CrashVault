@@ -6,15 +6,9 @@ window.CRASHVAULT_REGISTRY = {
       "name": "BWL",
       "color": "#38bdf8",
       "createdAt": "2026-06-02T17:51:56.892Z"
-    },
-    {
-      "id": "sd",
-      "name": "sd",
-      "color": "#a78bfa",
-      "createdAt": "2026-06-02T18:47:16.752Z"
     }
   ],
   "_meta": {
-    "lastSaved": "2026-06-02T18:47:17.697Z"
+    "lastSaved": "2026-06-02T18:47:37.932Z"
   }
 };
