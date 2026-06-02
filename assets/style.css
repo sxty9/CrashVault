@@ -1,0 +1,420 @@
+/* CrashVault — shared styles for dashboard and module view. */
+
+:root {
+  --bg: #0f172a;
+  --panel: #1e293b;
+  --panel-2: #273449;
+  --border: #334155;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #38bdf8;
+  --accent-2: #a78bfa;
+  --danger: #f87171;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --radius: 10px;
+  --shadow: 0 6px 24px rgba(0,0,0,.25);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--accent); }
+
+header {
+  position: sticky; top: 0; z-index: 10;
+  background: rgba(15,23,42,.92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 22px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap;
+}
+header h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: .2px; }
+header h1 .accent { color: var(--accent); }
+header h1 a { color: inherit; text-decoration: none; }
+header .crumbs { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+header .crumbs a { color: var(--muted); text-decoration: none; }
+header .crumbs a:hover { color: var(--text); }
+header .crumbs .sep { opacity: .6; }
+header .crumbs .here { color: var(--text); font-weight: 500; }
+
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.status-pill { font-size: 11px; color: var(--muted); padding: 2px 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; }
+.status-pill.ok { color: var(--ok); border-color: #1f4732; }
+.status-pill.err { color: var(--danger); border-color: #553030; }
+
+button {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 12px; font-size: 13px; cursor: pointer;
+  transition: background .15s, border-color .15s, transform .05s;
+}
+button:hover { background: #334155; border-color: #475569; }
+button:active { transform: translateY(1px); }
+button.primary { background: var(--accent); color: #0f172a; border-color: var(--accent); font-weight: 600; }
+button.primary:hover { background: #7dd3fc; }
+button.primary:disabled { background: var(--ok); color: #0f172a; border-color: var(--ok); cursor: default; opacity: .9; }
+button.ghost { background: transparent; }
+button.danger { color: var(--danger); border-color: #553030; }
+button.danger:hover { background: #2a1717; }
+button.small { padding: 4px 8px; font-size: 12px; }
+.save-btn { min-width: 150px; }
+.save-btn .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: #0f172a; vertical-align: middle; }
+
+input[type="text"], textarea {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 7px 10px; font-size: 13px; outline: none;
+  font-family: inherit;
+}
+input[type="text"]:focus, textarea:focus { border-color: var(--accent); }
+
+/* ============================================================
+   Toast + loading overlay
+   ============================================================ */
+.toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 16px; font-size: 13px; box-shadow: var(--shadow);
+  opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 300;
+}
+.toast.show { opacity: 1; }
+.toast.ok { border-color: #1f4732; color: var(--ok); }
+.toast.warn { border-color: #5c4a18; color: var(--warn); }
+.toast.err { border-color: #553030; color: var(--danger); }
+
+.loading-overlay {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  display: none; align-items: center; justify-content: center;
+  z-index: 200; backdrop-filter: blur(2px);
+}
+.loading-overlay.show { display: flex; }
+.loading-overlay .box {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px 28px;
+  font-size: 14px; color: var(--muted);
+}
+
+dialog {
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 20px 24px; box-shadow: var(--shadow); max-width: 92vw;
+}
+dialog::backdrop { background: rgba(15, 23, 42, .6); backdrop-filter: blur(2px); }
+dialog h3 { margin: 0 0 12px; font-size: 16px; }
+
+/* ============================================================
+   Dashboard — module grid
+   ============================================================ */
+.dashboard {
+  padding: 28px 22px;
+  max-width: 1400px; margin: 0 auto;
+}
+.dashboard .intro { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+.module-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px 18px 14px;
+  display: flex; flex-direction: column; gap: 10px;
+  min-height: 140px; position: relative;
+  cursor: pointer; transition: border-color .15s, transform .05s;
+}
+.module-card:hover { border-color: var(--accent); }
+.module-card:active { transform: translateY(1px); }
+.module-card .name { font-size: 15px; font-weight: 600; word-break: break-word; }
+.module-card .meta { font-size: 12px; color: var(--muted); }
+.module-card .badge { width: 12px; height: 12px; border-radius: 4px; background: var(--accent); }
+.module-card .actions {
+  position: absolute; top: 10px; right: 10px;
+  display: flex; gap: 4px;
+  opacity: 0; transition: opacity .15s;
+}
+.module-card:hover .actions { opacity: 1; }
+.module-card.add {
+  border-style: dashed; background: transparent;
+  color: var(--muted); align-items: center; justify-content: center;
+  text-align: center;
+}
+.module-card.add:hover { color: var(--text); border-color: var(--accent); }
+.module-card.add .plus { font-size: 32px; line-height: 1; }
+.module-card.add .lbl { font-size: 13px; }
+
+.empty-state {
+  background: var(--panel);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 40px;
+  text-align: center; color: var(--muted);
+}
+.empty-state h2 { margin: 0 0 8px; font-size: 18px; color: var(--text); }
+.empty-state p { margin: 0 0 16px; font-size: 13px; }
+
+/* ============================================================
+   Module view — freeform canvas + tiles
+   ============================================================ */
+.canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: calc(100vh - 60px);
+  overflow: auto;
+  background:
+    radial-gradient(circle, rgba(148,163,184,0.10) 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--bg);
+}
+.canvas {
+  position: relative;
+  width: 4000px;
+  height: 2400px;
+}
+
+.tile {
+  position: absolute;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  min-width: 280px; min-height: 200px;
+}
+.tile.dragging { opacity: .8; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+.tile.focused { border-color: var(--accent); }
+.tile-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px;
+  cursor: move; user-select: none;
+  background: rgba(255,255,255,.02);
+  flex-shrink: 0;
+}
+.tile-header .grip { color: var(--muted); font-size: 12px; }
+.tile-header input.title {
+  flex: 1; min-width: 100px;
+  background: transparent; border: none;
+  font-size: 14px; font-weight: 600; color: var(--text);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.tile-header input.title:hover, .tile-header input.title:focus { background: var(--panel-2); }
+.tile-header .actions { display: flex; gap: 4px; }
+.tile-body {
+  flex: 1; min-height: 0;
+  overflow: auto;
+  padding: 0;
+}
+.tile-resize {
+  position: absolute; right: 0; bottom: 0;
+  width: 16px; height: 16px;
+  cursor: se-resize;
+  background: linear-gradient(135deg, transparent 0 50%, var(--muted) 50% 60%, transparent 60% 72%, var(--muted) 72% 82%, transparent 82%);
+  opacity: .7;
+}
+
+.add-tile-fab {
+  position: fixed; right: 24px; bottom: 24px;
+  width: 56px; height: 56px; border-radius: 50%;
+  background: var(--accent); color: #0f172a;
+  border: none; font-size: 28px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; box-shadow: 0 6px 20px rgba(56,189,248,.4);
+  z-index: 50;
+}
+.add-tile-fab:hover { background: #7dd3fc; }
+.add-tile-popup {
+  position: fixed; right: 24px; bottom: 92px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 6px; z-index: 51;
+  min-width: 220px;
+}
+.add-tile-popup .head { font-size: 11px; color: var(--muted); padding: 6px 10px; text-transform: uppercase; letter-spacing: .5px; }
+.add-tile-popup button {
+  width: 100%; text-align: left;
+  background: transparent; border: none;
+  padding: 9px 12px; border-radius: 6px;
+  font-size: 13px;
+  display: flex; align-items: center; gap: 10px;
+}
+.add-tile-popup button:hover { background: var(--panel-2); }
+.add-tile-popup .icon { font-size: 16px; }
+
+/* ============================================================
+   Topic-list tile contents (compact port of BWL Themen UI)
+   ============================================================ */
+.tile .topics { display: flex; flex-direction: column; }
+.tile .topic {
+  border-bottom: 1px solid var(--border);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.tile .topic:last-child { border-bottom: none; }
+.tile .topic .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tile .topic .drag { cursor: grab; user-select: none; color: var(--muted); padding: 2px 4px; border-radius: 6px; }
+.tile .topic .drag:hover { background: var(--panel-2); color: var(--text); }
+.tile .topic input.t-title {
+  flex: 1; min-width: 160px;
+  background: transparent; border: none; border-bottom: 1px dashed transparent;
+  font-size: 14px; font-weight: 600; color: var(--text);
+  padding: 5px 4px; outline: none;
+}
+.tile .topic input.t-title:hover, .tile .topic input.t-title:focus { border-bottom-color: var(--border); }
+.tile .topic input.t-loc {
+  background: var(--panel-2); color: var(--muted);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 7px; font-size: 11px;
+  width: 160px; outline: none;
+}
+.tile .topic input.t-loc:focus { color: var(--text); border-color: var(--accent); }
+.tile .topic textarea.notes {
+  width: 100%; min-height: 50px; max-height: 500px;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 7px 9px; font-size: 12px;
+  font-family: inherit; resize: vertical; outline: none;
+  overflow: auto;
+}
+.tile .topic textarea.notes:focus { border-color: var(--accent); }
+.tile .topic .actions { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+.tile .topic .actions [data-act="anki"] {
+  height: 26px; padding: 0 8px; gap: 4px;
+  display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+}
+.tile .topic .anki-badge {
+  display: inline-block; min-width: 18px; height: 16px;
+  padding: 0 4px; font-size: 10px;
+  background: var(--accent); color: #0f172a;
+  border-radius: 3px; text-align: center; line-height: 16px;
+  font-weight: 600;
+}
+.tile .topic .anki-badge.is-empty { background: var(--border); color: var(--muted); }
+
+.tile .attachments { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tile .attachment {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 3px 3px 8px;
+  font-size: 11px;
+  display: inline-flex; align-items: center; gap: 5px;
+  max-width: 100%;
+}
+.tile .attachment.pending { border-color: var(--warn); }
+.tile .attachment .name {
+  color: var(--accent); text-decoration: none; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;
+}
+.tile .attachment .name:hover { text-decoration: underline; }
+.tile .attachment .src {
+  color: var(--muted); font-size: 9px; text-transform: uppercase;
+  background: rgba(255,255,255,.04); padding: 1px 4px; border-radius: 3px;
+}
+.tile .attachment.pending .src { color: var(--warn); background: rgba(251,191,36,.1); }
+.tile .attachment .rm {
+  background: transparent; border: none; color: var(--muted);
+  cursor: pointer; font-size: 13px; line-height: 1; padding: 1px 5px;
+}
+.tile .attachment .rm:hover { color: var(--danger); }
+.attach-menu-popup {
+  position: fixed;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: var(--shadow);
+  min-width: 260px; max-width: 380px; max-height: 320px; overflow-y: auto;
+  z-index: 1000; padding: 4px;
+}
+.attach-menu-popup button {
+  width: 100%; text-align: left; border: none; background: transparent;
+  padding: 7px 10px; border-radius: 6px; font-size: 13px;
+}
+.attach-menu-popup button:hover { background: var(--border); }
+.attach-menu-popup .label { font-size: 11px; color: var(--muted); padding: 6px 10px 2px; text-transform: uppercase; letter-spacing: .5px; }
+
+.tile .empty { color: var(--muted); padding: 16px; text-align: center; font-size: 13px; }
+.tile .add-row {
+  display: flex; gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  background: rgba(255,255,255,.02);
+}
+.tile .add-row input { flex: 1; }
+.tile .footer-actions {
+  padding: 8px 14px; border-top: 1px solid var(--border);
+  display: flex; gap: 8px; justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   Spruch-list tile contents
+   ============================================================ */
+.tile .ludolph { display: flex; flex-direction: column; }
+.tile .spruch {
+  display: flex; gap: 8px; padding: 8px 14px;
+  align-items: flex-start;
+  border-bottom: 1px solid var(--border);
+}
+.tile .spruch:last-child { border-bottom: none; }
+.tile .spruch .num { color: var(--muted); font-size: 11px; min-width: 22px; margin-top: 6px; }
+.tile .spruch textarea {
+  flex: 1; min-height: 32px; max-height: 400px;
+  background: transparent; color: var(--text);
+  border: 1px solid transparent; border-radius: 6px;
+  padding: 5px 8px; font-size: 13px;
+  font-family: inherit; resize: vertical; outline: none;
+}
+.tile .spruch textarea:hover { border-color: var(--border); }
+.tile .spruch textarea:focus { border-color: var(--accent); background: var(--panel-2); }
+.tile .spruch .rm {
+  background: transparent; border: none; color: var(--muted);
+  cursor: pointer; padding: 4px 8px; font-size: 13px; line-height: 1;
+}
+.tile .spruch .rm:hover { color: var(--danger); }
+
+/* ============================================================
+   Anki dialog (per tile)
+   ============================================================ */
+#ankiDlg {
+  max-width: 96vw; width: 760px; padding: 0; overflow: hidden;
+  resize: both;
+  min-width: 320px; min-height: 280px;
+  max-height: 92vh;
+}
+#ankiDlg[open] { display: flex; flex-direction: column; height: 78vh; }
+#ankiDlg .anki-head {
+  padding: 16px 20px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-shrink: 0;
+}
+#ankiDlg .anki-head h3 { margin: 0; font-size: 15px; }
+#ankiDlg .anki-head .sub { color: var(--muted); font-size: 12px; }
+.anki-cards { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px 20px; display: flex; flex-direction: column; gap: 14px; }
+.card-item {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.card-item:focus-within { border-color: var(--accent); }
+.card-item .card-bar { display: flex; align-items: center; gap: 8px; }
+.card-item .card-bar .num { font-size: 12px; color: var(--muted); }
+.card-item .card-bar .actions { margin-left: auto; display: flex; gap: 4px; }
+.card-item .card-bar .drag { cursor: grab; user-select: none; color: var(--muted); padding: 2px 4px; border-radius: 6px; }
+.card-field { display: flex; flex-direction: column; gap: 4px; }
+.card-field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+.card-field textarea { resize: vertical; min-height: 38px; font-size: 13px; }
+.anki-foot {
+  padding: 12px 20px; border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  flex-shrink: 0; position: relative;
+}
+.anki-foot .left { display: flex; align-items: center; gap: 10px; }
+.anki-foot .count { font-size: 12px; color: var(--muted); }

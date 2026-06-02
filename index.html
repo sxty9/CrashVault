@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrashVault — Lern-Cockpit</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+
+<header>
+  <h1><span class="accent">⚡</span> CrashVault</h1>
+  <div class="toolbar">
+    <span class="status-pill" id="statusPill">…</span>
+    <button class="ghost small" id="btnReload" title="Neu laden">↻</button>
+    <button class="ghost small" id="btnDiscard" style="display:none">Verwerfen</button>
+    <button class="primary save-btn" id="btnSave"><span class="dot"></span><span id="saveLabel">Gespeichert</span></button>
+  </div>
+</header>
+
+<main class="dashboard">
+  <p class="intro">Deine Klausurmodule. Klick auf ein Modul, um Themen, Sprüche und Karteikarten zu pflegen.</p>
+  <div class="module-grid" id="moduleGrid"></div>
+  <div id="emptyState" style="display:none">
+    <div class="empty-state">
+      <h2>Noch kein Modul</h2>
+      <p>Lege dein erstes Klausurmodul an — z.B. „BWL Klausurvorbereitung", „Rechnernetze", „Diskrete Mathematik II".</p>
+      <button class="primary" id="btnAddFirst">+ Erstes Modul anlegen</button>
+    </div>
+  </div>
+</main>
+
+<dialog id="addModuleDlg">
+  <h3>Neues Modul</h3>
+  <div style="display:flex;flex-direction:column;gap:12px;min-width:340px;">
+    <div>
+      <label style="display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Name</label>
+      <input type="text" id="newModuleName" placeholder="z.B. Rechnernetze" style="width:100%;">
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">ID (URL-Slug)</label>
+      <input type="text" id="newModuleId" placeholder="z.B. rechnernetze" style="width:100%;">
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Nur Kleinbuchstaben, Zahlen, "-" und "_". Wird automatisch aus dem Namen abgeleitet.</div>
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Farbe</label>
+      <div id="colorPicker" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+    </div>
+  </div>
+  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
+    <button id="cancelAddModule">Abbrechen</button>
+    <button class="primary" id="confirmAddModule">Anlegen</button>
+  </div>
+</dialog>
+
+<script src="/assets/util.js"></script>
+<script>
+"use strict";
+
+const { $, uid, escapeText, escapeAttr, slugify, toast, loading, api, apiPostJson } = window.CV;
+
+const LOCAL_CACHE_KEY = "crashvault-registry-cache";
+const COLORS = ["#38bdf8", "#a78bfa", "#4ade80", "#fbbf24", "#f87171", "#f472b6", "#22d3ee", "#fb923c"];
+
+let registry = { modules: [] };
+let baseSha = null;
+let dirty = false;
+
+function setStatus(kind, text) {
+  const el = $("#statusPill"); el.className = "status-pill " + (kind || ""); el.textContent = text;
+}
+function updateSaveButton() {
+  const btn = $("#btnSave"); const label = $("#saveLabel");
+  const dot = btn.querySelector(".dot"); const discard = $("#btnDiscard");
+  if (dirty) { btn.disabled = false; label.textContent = "Speichern"; dot.style.background = "#0f172a"; discard.style.display = ""; }
+  else      { btn.disabled = true;  label.textContent = "✓ Gespeichert"; dot.style.background = "transparent"; discard.style.display = "none"; }
+}
+function markDirty() {
+  dirty = true; updateSaveButton();
+  try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ registry, ts: Date.now() })); } catch (e) {}
+}
+
+async function loadRegistry() {
+  try {
+    const r = await api("/api/registry");
+    const json = await r.json();
+    registry = json.registry || { modules: [] };
+    if (!Array.isArray(registry.modules)) registry.modules = [];
+    baseSha = json.sha || null;
+    try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ registry, ts: Date.now() })); } catch (e) {}
+  } catch (e) {
+    setStatus("err", "Offline?");
+    throw e;
+  }
+}
+
+async function save() {
+  if (!dirty) return;
+  const btn = $("#btnSave"); const label = $("#saveLabel");
+  btn.disabled = true; label.textContent = "Speichere…";
+  try {
+    const json = await apiPostJson("/api/registry", { registry, expectedSha: baseSha });
+    baseSha = json.sha;
+    dirty = false;
+    updateSaveButton();
+    setStatus("ok", "Live");
+    toast("Gespeichert ✓", "ok");
+  } catch (e) {
+    dirty = true; updateSaveButton();
+    if (e.status === 409) { toast(e.message, "err"); setStatus("err", "Konflikt"); }
+    else { toast("Speichern fehlgeschlagen: " + e.message, "err"); setStatus("err", "Offline?"); }
+  }
+}
+
+function render() {
+  const grid = $("#moduleGrid");
+  const empty = $("#emptyState");
+  grid.innerHTML = "";
+  if (!registry.modules.length) {
+    grid.style.display = "none";
+    empty.style.display = "block";
+    return;
+  }
+  grid.style.display = "";
+  empty.style.display = "none";
+
+  registry.modules.forEach((m, idx) => {
+    const card = document.createElement("div");
+    card.className = "module-card";
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="badge" style="background:${escapeAttr(m.color || "#38bdf8")}"></span>
+        <span class="name">${escapeText(m.name)}</span>
+      </div>
+      <div class="meta">${escapeText(m.id)}</div>
+      <div style="margin-top:auto;font-size:12px;color:var(--muted);">${m.description ? escapeText(m.description) : "Modul öffnen →"}</div>
+      <div class="actions">
+        <button class="small ghost" data-act="rename" title="Umbenennen">✎</button>
+        <button class="small danger" data-act="del" title="Modul löschen">✕</button>
+      </div>
+    `;
+    card.addEventListener("click", e => {
+      if (e.target.closest("[data-act]")) return;
+      window.location.href = `/module.html?id=${encodeURIComponent(m.id)}`;
+    });
+    card.querySelector("[data-act='rename']").addEventListener("click", e => {
+      e.stopPropagation();
+      const next = prompt("Neuer Name:", m.name);
+      if (next === null) return;
+      const trimmed = next.trim();
+      if (!trimmed) return;
+      m.name = trimmed;
+      markDirty(); render();
+    });
+    card.querySelector("[data-act='del']").addEventListener("click", e => {
+      e.stopPropagation();
+      if (!confirm(`Modul "${m.name}" wirklich löschen?\n\nDas entfernt nur den Eintrag aus der Übersicht. Die Daten (modules/${m.id}/) bleiben im Repo erhalten — du kannst sie später manuell wieder eintragen oder vollständig aus dem Repo löschen.`)) return;
+      registry.modules.splice(idx, 1);
+      markDirty(); render();
+    });
+    grid.appendChild(card);
+  });
+
+  const addCard = document.createElement("div");
+  addCard.className = "module-card add";
+  addCard.innerHTML = `<div class="plus">+</div><div class="lbl">Neues Modul</div>`;
+  addCard.addEventListener("click", openAddDialog);
+  grid.appendChild(addCard);
+}
+
+// ============================================================
+// Add-module dialog
+// ============================================================
+let selectedColor = COLORS[0];
+function renderColorPicker() {
+  const p = $("#colorPicker");
+  p.innerHTML = "";
+  COLORS.forEach(c => {
+    const sw = document.createElement("button");
+    sw.style.cssText = `width:28px;height:28px;border-radius:6px;border:2px solid ${c === selectedColor ? "var(--text)" : "transparent"};background:${c};padding:0;cursor:pointer;`;
+    sw.addEventListener("click", () => { selectedColor = c; renderColorPicker(); });
+    p.appendChild(sw);
+  });
+}
+function openAddDialog() {
+  selectedColor = COLORS[registry.modules.length % COLORS.length];
+  $("#newModuleName").value = "";
+  $("#newModuleId").value = "";
+  renderColorPicker();
+  $("#addModuleDlg").showModal();
+  setTimeout(() => $("#newModuleName").focus(), 0);
+}
+$("#newModuleName").addEventListener("input", e => {
+  const idEl = $("#newModuleId");
+  if (!idEl.dataset.touched) idEl.value = slugify(e.target.value);
+});
+$("#newModuleId").addEventListener("input", e => {
+  e.target.dataset.touched = "1";
+  e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+});
+$("#cancelAddModule").addEventListener("click", () => $("#addModuleDlg").close());
+$("#confirmAddModule").addEventListener("click", () => {
+  const name = $("#newModuleName").value.trim();
+  const id = $("#newModuleId").value.trim();
+  if (!name) { toast("Name fehlt", "warn"); return; }
+  if (!/^[a-z0-9][a-z0-9_-]{0,40}$/.test(id)) { toast("ID muss mit Buchstabe/Zahl beginnen und nur a-z 0-9 _ - enthalten", "warn"); return; }
+  if (registry.modules.some(m => m.id === id)) { toast("ID bereits vergeben", "err"); return; }
+  registry.modules.push({ id, name, color: selectedColor, createdAt: new Date().toISOString() });
+  $("#addModuleDlg").close();
+  markDirty(); render();
+});
+$("#btnAddFirst").addEventListener("click", openAddDialog);
+
+// ============================================================
+// Wiring
+// ============================================================
+$("#btnSave").addEventListener("click", save);
+$("#btnDiscard").addEventListener("click", reload);
+$("#btnReload").addEventListener("click", reload);
+
+async function reload() {
+  if (dirty && !confirm("Ungespeicherte Änderungen verwerfen?")) return;
+  loading("Lade…");
+  try {
+    await loadRegistry();
+    dirty = false; updateSaveButton(); render();
+    setStatus("ok", "Live");
+    toast("Neu geladen ✓", "ok");
+  } catch (e) {
+    toast("Laden fehlgeschlagen: " + e.message, "err");
+  } finally { loading(null); }
+}
+
+window.addEventListener("beforeunload", e => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+window.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); if (dirty) save(); }
+});
+
+// ============================================================
+// Init
+// ============================================================
+(async function init() {
+  // Quick first paint from cache
+  try {
+    const cached = JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY) || "null");
+    if (cached?.registry?.modules) { registry = cached.registry; render(); }
+  } catch (e) {}
+
+  setStatus("", "Lade…"); loading("Lade Module…");
+  try {
+    await loadRegistry();
+    render(); updateSaveButton();
+    setStatus("ok", "Live");
+  } catch (e) {
+    console.error(e);
+    toast("Server nicht erreichbar: " + e.message, "err");
+    // Render whatever we had from cache; if nothing, show empty state
+    render();
+  } finally { loading(null); }
+})();
+</script>
+</body>
+</html>

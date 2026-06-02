@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrashVault — Modul</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+
+<header>
+  <div class="crumbs">
+    <a href="/">⚡ CrashVault</a>
+    <span class="sep">›</span>
+    <span class="here" id="moduleName">…</span>
+  </div>
+  <div class="toolbar">
+    <span class="status-pill" id="statusPill">…</span>
+    <button class="ghost small" id="btnReload" title="Neu laden">↻</button>
+    <button class="ghost small" id="btnDiscard" style="display:none">Verwerfen</button>
+    <button class="primary save-btn" id="btnSave"><span class="dot"></span><span id="saveLabel">Gespeichert</span></button>
+  </div>
+</header>
+
+<div class="canvas-wrap" id="canvasWrap">
+  <div class="canvas" id="canvas"></div>
+</div>
+
+<button class="add-tile-fab" id="btnAddTile" title="Kachel hinzufügen">+</button>
+
+<!-- Anki dialog (shared across topic-list tiles) -->
+<dialog id="ankiDlg">
+  <div class="anki-head">
+    <div>
+      <h3 id="ankiTitle">Anki Karteikarten</h3>
+      <div class="sub" id="ankiSub"></div>
+    </div>
+    <button class="ghost small" id="closeAnki">Schließen</button>
+  </div>
+  <div class="anki-cards" id="ankiCards"></div>
+  <div class="anki-foot">
+    <div class="left">
+      <button class="small primary" id="ankiAddCard">+ Karte</button>
+      <span class="count" id="ankiCount"></span>
+    </div>
+    <button class="small" id="ankiExport">Exportieren (.apkg)</button>
+  </div>
+</dialog>
+
+<script src="/assets/util.js"></script>
+<script src="/tiles/topic-list.js"></script>
+<script src="/tiles/spruch-list.js"></script>
+<script>
+"use strict";
+
+const { $, uid, escapeText, escapeAttr, toast, loading, api, apiJson, apiPostJson, autosize } = window.CV;
+
+const params = new URLSearchParams(location.search);
+const moduleId = params.get("id");
+if (!moduleId || !/^[a-z0-9][a-z0-9_-]{0,40}$/.test(moduleId)) {
+  alert("Ungültige Modul-ID in der URL.");
+  location.href = "/";
+}
+
+const LOCAL_CACHE_KEY = `crashvault-module-${moduleId}`;
+
+let state = { id: moduleId, name: moduleId, tiles: [] };
+let baseSha = null;
+let dirty = false;
+let pendingUploads = new Map();
+let repoFiles = [];
+
+function setStatus(kind, text) {
+  const el = $("#statusPill"); el.className = "status-pill " + (kind || ""); el.textContent = text;
+}
+function updateSaveButton() {
+  const btn = $("#btnSave"); const label = $("#saveLabel");
+  const dot = btn.querySelector(".dot"); const discard = $("#btnDiscard");
+  if (dirty) { btn.disabled = false; label.textContent = "Speichern"; dot.style.background = "#0f172a"; discard.style.display = ""; }
+  else      { btn.disabled = true;  label.textContent = "✓ Gespeichert"; dot.style.background = "transparent"; discard.style.display = "none"; }
+}
+function markDirty() {
+  dirty = true; updateSaveButton();
+  try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ state, ts: Date.now() })); } catch (e) {}
+}
+
+// ============================================================
+// Load / save
+// ============================================================
+async function loadFromServer() {
+  const r = await api(`/api/data?module=${encodeURIComponent(moduleId)}`);
+  const json = await r.json();
+  if (json.state && json.state.id === moduleId) {
+    state = json.state;
+  } else {
+    // First load — module has no data file yet. Look up the friendly name in
+    // the registry so the header doesn't say the raw slug.
+    let friendlyName = moduleId;
+    try {
+      const reg = await apiJson("/api/registry");
+      const m = (reg.registry?.modules || []).find(x => x.id === moduleId);
+      if (m) friendlyName = m.name;
+    } catch (e) {}
+    state = { id: moduleId, name: friendlyName, tiles: [] };
+  }
+  if (!Array.isArray(state.tiles)) state.tiles = [];
+  baseSha = json.sha || null;
+  try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ state, ts: Date.now() })); } catch (e) {}
+}
+
+async function loadRepoFiles() {
+  try {
+    const json = await apiJson(`/api/files?module=${encodeURIComponent(moduleId)}`);
+    repoFiles = (json.files || []).map(p => ({ path: p, name: p.split("/").pop() }));
+  } catch (e) { console.warn("loadRepoFiles", e); repoFiles = []; }
+}
+
+async function uploadBlob(path, file) {
+  const r = await api(`/api/upload?path=${encodeURIComponent(path)}`, {
+    method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file
+  });
+  return (await r.json()).sha;
+}
+
+async function save() {
+  if (!dirty) return;
+  const btn = $("#btnSave"); const label = $("#saveLabel");
+  btn.disabled = true; label.textContent = "Speichere…";
+  try {
+    const fileShas = [];
+    let i = 0;
+    for (const [attId, file] of pendingUploads) {
+      i++;
+      label.textContent = `Lade ${i}/${pendingUploads.size}…`;
+      let att = findAttachment(attId);
+      if (!att) continue;
+      let path = att.path;
+      while (repoFiles.some(rf => rf.path === path)) {
+        const dot = path.lastIndexOf(".");
+        const slash = path.lastIndexOf("/");
+        const stem = dot > slash ? path.slice(0, dot) : path;
+        const ext  = dot > slash ? path.slice(dot) : "";
+        path = `${stem}-${Date.now().toString(36)}${ext}`;
+      }
+      const sha = await uploadBlob(path, file);
+      fileShas.push({ path, sha });
+      att.name = path.split("/").pop();
+      att.path = path;
+      att.source = "repo";
+    }
+    label.textContent = "Commite…";
+    const json = await apiPostJson(`/api/data?module=${encodeURIComponent(moduleId)}`, {
+      state, expectedSha: baseSha, fileShas
+    });
+    baseSha = json.sha;
+    pendingUploads.clear();
+    dirty = false; updateSaveButton();
+    await loadRepoFiles();
+    renderAll();
+    toast(fileShas.length ? `Gespeichert ✓  (+ ${fileShas.length} Datei(en))` : "Gespeichert ✓", "ok");
+    setStatus("ok", "Live");
+  } catch (e) {
+    dirty = true; updateSaveButton();
+    if (e.status === 409) { toast(e.message, "err"); setStatus("err", "Konflikt"); }
+    else                  { toast("Speichern fehlgeschlagen: " + e.message, "err"); setStatus("err", "Offline?"); }
+  }
+}
+
+function findAttachment(attId) {
+  for (const tile of state.tiles) {
+    if (tile.type !== "topic-list") continue;
+    for (const t of (tile.state?.topics || [])) {
+      const a = (t.attachments || []).find(x => x.id === attId);
+      if (a) return a;
+    }
+  }
+  return null;
+}
+
+// ============================================================
+// Tile rendering (freeform canvas)
+// ============================================================
+function renderAll() {
+  document.title = `CrashVault — ${state.name}`;
+  $("#moduleName").textContent = state.name || moduleId;
+  const canvas = $("#canvas");
+  canvas.innerHTML = "";
+  state.tiles.forEach(tile => canvas.appendChild(buildTileEl(tile)));
+}
+
+function tileCtx() {
+  return {
+    moduleId,
+    moduleName: state.name || moduleId,
+    markDirty,
+    uploadQueue: pendingUploads,
+    repoFiles,
+    openAnki: (tile, topic) => openAnkiDialog(tile, topic)
+  };
+}
+
+function buildTileEl(tile) {
+  const cls = window.CV_TILES[tile.type];
+  const el = document.createElement("div");
+  el.className = "tile";
+  el.dataset.id = tile.id;
+  el.style.left   = (tile.x || 20) + "px";
+  el.style.top    = (tile.y || 20) + "px";
+  el.style.width  = (tile.w || (cls?.defaultSize?.w || 600)) + "px";
+  el.style.height = (tile.h || (cls?.defaultSize?.h || 500)) + "px";
+  el.style.zIndex = tile.z || 1;
+
+  el.innerHTML = `
+    <div class="tile-header" data-drag>
+      <span class="grip">⋮⋮</span>
+      <span class="grip" style="font-size:14px">${cls?.icon || "▦"}</span>
+      <input class="title" type="text" value="${escapeAttr(tile.title || cls?.label || "Kachel")}">
+      <div class="actions">
+        <button class="small ghost" data-act="front" title="In den Vordergrund">↑</button>
+        <button class="small danger" data-act="del" title="Kachel löschen">✕</button>
+      </div>
+    </div>
+    <div class="tile-body" data-body></div>
+    <div class="tile-resize" data-resize></div>
+  `;
+
+  el.querySelector("input.title").addEventListener("input", e => { tile.title = e.target.value; markDirty(); });
+  el.querySelector("input.title").addEventListener("mousedown", e => e.stopPropagation());
+  el.querySelector("[data-act='del']").addEventListener("click", () => {
+    if (!confirm(`Kachel "${tile.title}" wirklich löschen?\n\nDie enthaltenen Daten gehen verloren.`)) return;
+    // Drop any pending uploads owned by this tile so they don't get committed
+    // along with an unrelated save.
+    if (tile.type === "topic-list") {
+      for (const t of (tile.state?.topics || [])) {
+        for (const a of (t.attachments || [])) pendingUploads.delete(a.id);
+      }
+    }
+    state.tiles = state.tiles.filter(x => x.id !== tile.id);
+    markDirty(); renderAll();
+  });
+  el.querySelector("[data-act='front']").addEventListener("click", () => bringToFront(tile, el));
+
+  wireDrag(el, tile);
+  wireResize(el, tile);
+
+  // Render tile body using its class
+  const body = el.querySelector("[data-body]");
+  if (cls) {
+    try { cls.render(body, tile, tileCtx()); }
+    catch (e) { console.error("tile render error:", e); body.innerHTML = `<div class="empty">Render-Fehler: ${escapeText(e.message)}</div>`; }
+  } else {
+    body.innerHTML = `<div class="empty">Unbekannte Kachel-Klasse: ${escapeText(tile.type)}</div>`;
+  }
+  return el;
+}
+
+function bringToFront(tile, el) {
+  const maxZ = Math.max(...state.tiles.map(t => t.z || 1), 1);
+  if (tile.z !== maxZ + 1) {
+    tile.z = maxZ + 1;
+    el.style.zIndex = tile.z;
+    markDirty();
+  }
+}
+
+function wireDrag(el, tile) {
+  const handle = el.querySelector("[data-drag]");
+  handle.addEventListener("mousedown", e => {
+    if (e.target.closest("input,button,textarea")) return;
+    e.preventDefault();
+    bringToFront(tile, el);
+    el.classList.add("dragging");
+    const startX = e.clientX, startY = e.clientY;
+    const startLeft = parseFloat(el.style.left || 0);
+    const startTop  = parseFloat(el.style.top  || 0);
+    function move(ev) {
+      const nx = Math.max(0, startLeft + (ev.clientX - startX));
+      const ny = Math.max(0, startTop  + (ev.clientY - startY));
+      el.style.left = nx + "px";
+      el.style.top  = ny + "px";
+    }
+    function up() {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      el.classList.remove("dragging");
+      tile.x = parseFloat(el.style.left);
+      tile.y = parseFloat(el.style.top);
+      markDirty();
+    }
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  });
+}
+
+function wireResize(el, tile) {
+  const handle = el.querySelector("[data-resize]");
+  handle.addEventListener("mousedown", e => {
+    e.preventDefault(); e.stopPropagation();
+    bringToFront(tile, el);
+    const startX = e.clientX, startY = e.clientY;
+    const startW = el.offsetWidth, startH = el.offsetHeight;
+    function move(ev) {
+      const nw = Math.max(280, startW + (ev.clientX - startX));
+      const nh = Math.max(200, startH + (ev.clientY - startY));
+      el.style.width  = nw + "px";
+      el.style.height = nh + "px";
+    }
+    function up() {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      tile.w = el.offsetWidth;
+      tile.h = el.offsetHeight;
+      markDirty();
+    }
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  });
+}
+
+// ============================================================
+// Add-tile FAB + popup
+// ============================================================
+function findFreePosition(defaultSize) {
+  // Place new tile at the top-right of the visible scroll area, then nudge
+  // diagonally if it would overlap an existing tile.
+  const wrap = $("#canvasWrap");
+  let x = wrap.scrollLeft + 40;
+  let y = wrap.scrollTop  + 40;
+  const w = defaultSize.w, h = defaultSize.h;
+  let attempts = 0;
+  while (attempts < 30 && state.tiles.some(t => overlaps(t, x, y, w, h))) {
+    x += 40; y += 40; attempts++;
+  }
+  return { x, y };
+}
+function overlaps(t, x, y, w, h) {
+  const tw = t.w || 600, th = t.h || 500, tx = t.x || 20, ty = t.y || 20;
+  return !(x + w < tx || x > tx + tw || y + h < ty || y > ty + th);
+}
+
+$("#btnAddTile").addEventListener("click", e => {
+  e.stopPropagation();
+  document.querySelectorAll(".add-tile-popup").forEach(p => p.remove());
+  const popup = document.createElement("div");
+  popup.className = "add-tile-popup";
+  popup.innerHTML = `<div class="head">Kachel hinzufügen</div>`;
+  for (const [type, cls] of Object.entries(window.CV_TILES || {})) {
+    const b = document.createElement("button");
+    b.innerHTML = `<span class="icon">${cls.icon || "▦"}</span><span style="display:flex;flex-direction:column;align-items:flex-start;line-height:1.2;"><span>${escapeText(cls.label)}</span><span style="font-size:11px;color:var(--muted)">${escapeText(cls.description || "")}</span></span>`;
+    b.addEventListener("click", () => {
+      popup.remove();
+      const pos = findFreePosition(cls.defaultSize || { w: 600, h: 500 });
+      const tile = {
+        id: uid(),
+        type,
+        title: cls.label,
+        x: pos.x, y: pos.y,
+        w: cls.defaultSize?.w || 600,
+        h: cls.defaultSize?.h || 500,
+        z: (Math.max(...state.tiles.map(t => t.z || 1), 0) + 1),
+        state: cls.defaultState ? cls.defaultState() : {}
+      };
+      state.tiles.push(tile);
+      markDirty(); renderAll();
+      // Scroll the new tile into view if it's off-screen
+      const wrap = $("#canvasWrap");
+      wrap.scrollTo({ left: Math.max(0, tile.x - 40), top: Math.max(0, tile.y - 40), behavior: "smooth" });
+    });
+    popup.appendChild(b);
+  }
+  document.body.appendChild(popup);
+  setTimeout(() => {
+    const close = ev => {
+      if (!popup.contains(ev.target) && ev.target !== $("#btnAddTile")) {
+        popup.remove();
+        document.removeEventListener("click", close);
+      }
+    };
+    document.addEventListener("click", close);
+  }, 0);
+});
+
+// ============================================================
+// Anki dialog (shared) — driven by topic-list tiles
+// ============================================================
+let ankiContext = null; // { tile, topic }
+
+function openAnkiDialog(tile, topic) {
+  ankiContext = { tile, topic };
+  if (!Array.isArray(topic.cards)) topic.cards = [];
+  $("#ankiTitle").textContent = "Anki — " + (topic.title || "Unbenannt");
+  $("#ankiSub").textContent = topic.location || "";
+  $("#ankiDlg").showModal();
+  renderAnkiCards();
+}
+
+function renderAnkiCards() {
+  if (!ankiContext) return;
+  const { topic } = ankiContext;
+  const cards = topic.cards;
+  const container = $("#ankiCards");
+  container.innerHTML = "";
+
+  if (!cards.length) {
+    container.innerHTML = `<div class="empty">Noch keine Karten. Klick auf "+ Karte".</div>`;
+  } else {
+    cards.forEach((card, ci) => {
+      const item = document.createElement("div");
+      item.className = "card-item";
+      item.dataset.id = card.id;
+      item.innerHTML = `
+        <div class="card-bar">
+          <span class="drag" title="Ziehen zum Sortieren">⋮⋮</span>
+          <span class="num">Karte ${ci + 1}</span>
+          <div class="actions">
+            <button class="small ghost" data-act="up" title="Hoch">↑</button>
+            <button class="small ghost" data-act="down" title="Runter">↓</button>
+            <button class="small danger" data-act="rm" title="Karte löschen">✕</button>
+          </div>
+        </div>
+        <div class="card-field front">
+          <label>Vorderseite</label>
+          <textarea placeholder="Frage / Vorderseite" rows="2">${escapeText(card.front || "")}</textarea>
+        </div>
+        <div class="card-field back">
+          <label>Rückseite</label>
+          <textarea placeholder="Antwort / Rückseite" rows="3">${escapeText(card.back || "")}</textarea>
+        </div>
+      `;
+      const frontTA = item.querySelector(".front textarea");
+      const backTA  = item.querySelector(".back textarea");
+      frontTA.addEventListener("input", e => { card.front = e.target.value; autosize(frontTA); markDirty(); });
+      backTA .addEventListener("input", e => { card.back  = e.target.value; autosize(backTA);  markDirty(); });
+      item.querySelector("[data-act='up']").addEventListener("click", () => moveCard(ci, -1));
+      item.querySelector("[data-act='down']").addEventListener("click", () => moveCard(ci, +1));
+      item.querySelector("[data-act='rm']").addEventListener("click", () => {
+        cards.splice(ci, 1);
+        markDirty(); renderAnkiCards(); renderAll();
+      });
+
+      const drag = item.querySelector(".drag");
+      drag.addEventListener("mousedown", () => { item.draggable = true; });
+      item.addEventListener("dragstart", e => {
+        e.dataTransfer.setData("text/plain", card.id);
+        e.dataTransfer.effectAllowed = "move";
+        item.classList.add("dragging");
+      });
+      item.addEventListener("dragend", () => { item.classList.remove("dragging"); item.draggable = false; });
+      item.addEventListener("dragover", e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; });
+      item.addEventListener("drop", e => {
+        e.preventDefault();
+        const fromId = e.dataTransfer.getData("text/plain");
+        if (!fromId || fromId === card.id) return;
+        const fromIdx = cards.findIndex(x => x.id === fromId);
+        const toIdx   = cards.findIndex(x => x.id === card.id);
+        if (fromIdx < 0 || toIdx < 0) return;
+        const [moved] = cards.splice(fromIdx, 1);
+        cards.splice(toIdx, 0, moved);
+        markDirty(); renderAnkiCards();
+      });
+
+      container.appendChild(item);
+      autosize(frontTA); autosize(backTA);
+    });
+  }
+  $("#ankiCount").textContent = `${cards.length} Karte${cards.length !== 1 ? "n" : ""}`;
+  $("#ankiExport").disabled = !cards.length;
+}
+
+function moveCard(idx, delta) {
+  const cards = ankiContext && ankiContext.topic.cards;
+  if (!cards) return;
+  const to = idx + delta;
+  if (to < 0 || to >= cards.length) return;
+  const [item] = cards.splice(idx, 1);
+  cards.splice(to, 0, item);
+  markDirty(); renderAnkiCards();
+}
+
+$("#ankiAddCard").addEventListener("click", () => {
+  if (!ankiContext) return;
+  ankiContext.topic.cards.push({ id: uid(), front: "", back: "" });
+  markDirty(); renderAnkiCards(); renderAll();
+  const items = $("#ankiCards").querySelectorAll(".card-item");
+  if (items.length) items[items.length - 1].querySelector("textarea").focus();
+});
+$("#ankiExport").addEventListener("click", async () => {
+  if (!ankiContext) return;
+  await window.CV_TILES["topic-list"].exportTopic(ankiContext.tile, ankiContext.topic, tileCtx());
+});
+$("#closeAnki").addEventListener("click", () => { $("#ankiDlg").close(); ankiContext = null; });
+
+// ============================================================
+// Header wiring + init
+// ============================================================
+$("#btnSave").addEventListener("click", save);
+$("#btnDiscard").addEventListener("click", reload);
+$("#btnReload").addEventListener("click", reload);
+
+async function reload() {
+  if (dirty && !confirm("Ungespeicherte Änderungen verwerfen?")) return;
+  loading("Lade…");
+  try {
+    await loadFromServer();
+    await loadRepoFiles();
+    pendingUploads.clear();
+    dirty = false; updateSaveButton(); renderAll();
+    setStatus("ok", "Live"); toast("Neu geladen ✓", "ok");
+  } catch (e) {
+    toast("Laden fehlgeschlagen: " + e.message, "err");
+    setStatus("err", "Offline?");
+  } finally { loading(null); }
+}
+
+window.addEventListener("beforeunload", e => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+window.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); if (dirty) save(); }
+});
+
+(async function init() {
+  // Cache-first paint
+  try {
+    const cached = JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY) || "null");
+    if (cached?.state?.tiles) { state = cached.state; renderAll(); }
+  } catch (e) {}
+
+  setStatus("", "Lade…"); loading("Lade Modul…");
+  try {
+    await loadFromServer();
+    await loadRepoFiles();
+    renderAll(); updateSaveButton();
+    setStatus("ok", "Live");
+  } catch (e) {
+    console.error(e);
+    setStatus("err", "Offline?");
+    toast("Server nicht erreichbar: " + e.message, "err");
+    renderAll();
+  } finally { loading(null); }
+})();
+</script>
+</body>
+</html>

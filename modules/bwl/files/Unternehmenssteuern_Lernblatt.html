@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Unternehmenssteuern – Ertragsteuern (Lernzettel)</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..900;1,9..144,400..600&family=Spline+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+
+<style>
+  :root{
+    --paper:#f4f0e6;
+    --paper-2:#efe9da;
+    --ink:#23211c;
+    --ink-soft:#5a564b;
+    --line:#d8d1bd;
+    --green:#1f5d4c;
+    --green-soft:#2f7a63;
+    --gold:#c0892f;
+    --gold-bg:#f5e7c8;
+    --warn:#a8431f;
+    --warn-bg:#f4ddcf;
+  }
+
+  *{box-sizing:border-box;}
+  html{ -webkit-text-size-adjust:100%; }
+  body{
+    margin:0;
+    background:
+      radial-gradient(circle at 15% 0%, #faf7ef 0%, transparent 45%),
+      var(--paper);
+    color:var(--ink);
+    font-family:"Spline Sans", system-ui, sans-serif;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  .sheet{
+    max-width:880px;
+    margin:0 auto;
+    padding:clamp(20px,4vw,52px) clamp(18px,4vw,56px) 64px;
+  }
+
+  /* ---- Header ---- */
+  header{
+    border-bottom:3px solid var(--ink);
+    padding-bottom:18px;
+    margin-bottom:30px;
+  }
+  .kicker{
+    display:inline-flex;align-items:center;gap:8px;
+    font-size:.72rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--green);
+    background:var(--gold-bg);
+    border:1px solid var(--gold);
+    padding:5px 12px;border-radius:999px;
+    margin-bottom:16px;
+  }
+  .kicker .dot{width:7px;height:7px;border-radius:50%;background:var(--warn);}
+  h1{
+    font-family:"Fraunces", serif;
+    font-weight:600;
+    font-size:clamp(2rem,5vw,3.1rem);
+    line-height:1.04;
+    letter-spacing:-.01em;
+    margin:0;
+  }
+  h1 .sub{display:block;font-size:.42em;font-weight:500;font-style:italic;color:var(--ink-soft);margin-top:8px;letter-spacing:0;}
+
+  /* ---- Hero formula ---- */
+  .hero{
+    margin:30px 0 40px;
+    background:var(--green);
+    color:#f4f0e6;
+    border-radius:18px;
+    padding:clamp(22px,4vw,38px);
+    position:relative;
+    overflow:hidden;
+    box-shadow:0 18px 40px -22px rgba(31,93,76,.85);
+  }
+  .hero::after{
+    content:"€";
+    position:absolute;right:-18px;bottom:-46px;
+    font-family:"Fraunces",serif;font-weight:700;
+    font-size:13rem;line-height:1;color:rgba(255,255,255,.06);
+  }
+  .hero h2{
+    margin:0 0 14px;font-family:"Spline Sans",sans-serif;
+    font-size:.72rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;
+    color:#9fd4c1;
+  }
+  .hero .katex{color:#fbf8f0;}
+  .hero .formula{font-size:clamp(1.05rem,3vw,1.5rem);}
+  .hero ul{margin:18px 0 0;padding:0;list-style:none;font-size:.92rem;color:#dcefe6;}
+  .hero li{padding-left:20px;position:relative;margin:6px 0;}
+  .hero li::before{content:"→";position:absolute;left:0;color:#9fd4c1;font-weight:700;}
+
+  /* ---- Sections / steps ---- */
+  .steps{
+    display:grid;
+    gap:16px;
+    grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+    margin-bottom:36px;
+  }
+  .card{
+    background:#fbf8f0;
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:20px 22px;
+    position:relative;
+  }
+  .card .num{
+    font-family:"Fraunces",serif;font-weight:700;font-style:italic;
+    font-size:1.05rem;color:var(--gold);
+  }
+  .card h3{
+    font-family:"Fraunces",serif;font-weight:600;
+    font-size:1.32rem;margin:.1em 0 .5em;line-height:1.1;
+  }
+  .card h3 small{display:block;font-family:"Spline Sans";font-size:.7rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft);margin-top:4px;}
+  .card ul{margin:0 0 14px;padding-left:1.1em;font-size:.93rem;color:var(--ink-soft);}
+  .card ul li{margin:5px 0;}
+  .card ul li strong{color:var(--ink);}
+  .rate{
+    font-family:"Fraunces",serif;font-weight:700;
+    font-size:2.2rem;color:var(--green);line-height:1;
+    margin-bottom:10px;
+  }
+  .card .formula{font-size:.95rem;margin-top:6px;}
+
+  .warn{
+    margin-top:12px;
+    background:var(--warn-bg);
+    border-left:3px solid var(--warn);
+    border-radius:0 8px 8px 0;
+    padding:9px 12px;
+    font-size:.84rem;color:#7c3217;
+  }
+  .warn b{color:var(--warn);}
+
+  .pill-note{
+    display:inline-block;margin-top:8px;
+    font-size:.82rem;font-weight:600;color:var(--green-soft);
+  }
+
+  /* ---- Section heading ---- */
+  .sec-h{
+    font-family:"Fraunces",serif;font-weight:600;font-size:1.5rem;
+    margin:0 0 16px;display:flex;align-items:center;gap:12px;
+  }
+  .sec-h::before{content:"";width:26px;height:2px;background:var(--gold);}
+
+  /* ---- Table ---- */
+  .calc{margin-bottom:36px;}
+  table{
+    width:100%;border-collapse:collapse;
+    background:#fbf8f0;border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    font-size:.93rem;
+  }
+  thead th{
+    background:var(--green);color:#f4f0e6;text-align:left;
+    font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700;
+    padding:11px 16px;
+  }
+  td{padding:11px 16px;border-top:1px solid var(--line);}
+  td:last-child,th:last-child{text-align:right;font-variant-numeric:tabular-nums;}
+  tr.total td{background:var(--gold-bg);font-weight:700;color:var(--ink);border-top:2px solid var(--gold);}
+  .calc .katex{font-size:.95em;}
+  .takeaway{
+    margin-top:14px;font-size:.92rem;color:var(--ink-soft);
+    display:flex;flex-wrap:wrap;gap:8px 22px;
+  }
+  .takeaway b{color:var(--green);}
+
+  /* ---- Schema ---- */
+  .schema h2{font-family:"Fraunces",serif;font-weight:600;font-size:1.5rem;margin:0 0 14px;}
+  pre{
+    background:var(--ink);color:#e9e4d4;
+    border-radius:14px;padding:22px 24px;margin:0;
+    font-family:"JetBrains Mono",monospace;font-size:.84rem;line-height:1.7;
+    overflow-x:auto;
+    box-shadow:0 14px 30px -20px rgba(35,33,28,.8);
+  }
+  pre .res{color:#8fd0bb;font-weight:600;}
+  pre .op{color:var(--gold);}
+  pre .fin{color:#f0c970;font-weight:600;}
+
+  footer{
+    margin-top:42px;padding-top:16px;border-top:1px solid var(--line);
+    font-size:.78rem;color:var(--ink-soft);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+  }
+
+  /* ---- Print ---- */
+  @media print{
+    body{background:#fff;}
+    .sheet{padding:0;max-width:none;}
+    .hero{box-shadow:none;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    pre,thead th,tr.total td,.hero,.kicker,.warn{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    .card{break-inside:avoid;}
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <header>
+    <span class="kicker"><span class="dot"></span> Klausurrelevant · 4 Punkte</span>
+    <h1>Unternehmenssteuern
+      <span class="sub">Ertragsteuern der Kapitalgesellschaft (GmbH · AG · UG)</span>
+    </h1>
+  </header>
+
+  <section class="hero">
+    <h2>Kernformel</h2>
+    <div class="formula">$$\text{Ertragsteuern} = \text{KSt} + \text{SolZ} + \text{GewSt}$$</div>
+    <ul>
+      <li>„Ertragsteuern" = <b>Oberbegriff</b> für alle Steuern auf den Gewinn — keine eigene Steuerart</li>
+      <li>gilt für die <b>Handelsgesellschaft = Kapitalgesellschaft</b></li>
+    </ul>
+  </section>
+
+  <h2 class="sec-h">Die drei Komponenten</h2>
+  <div class="steps">
+
+    <div class="card">
+      <span class="num">01</span>
+      <h3>Körperschaftsteuer <small>KSt</small></h3>
+      <div class="rate">15&nbsp;%</div>
+      <ul>
+        <li>vom <strong>Gewinn</strong></li>
+        <li>einheitlich, <strong>keine Progression</strong></li>
+      </ul>
+      <div class="formula">$$\text{KSt} = \text{Gewinn} \times 15\%$$</div>
+    </div>
+
+    <div class="card">
+      <span class="num">02</span>
+      <h3>Solidaritätszuschlag <small>SolZ</small></h3>
+      <div class="rate">0,825&nbsp;%</div>
+      <ul>
+        <li><strong>5,5&nbsp;% auf die KSt</strong></li>
+        <li>$5,5\% \times 15\% = 0,825\%$ des Gewinns</li>
+      </ul>
+      <div class="formula">$$\text{SolZ} = \text{KSt} \times 5,5\%$$</div>
+      <div class="warn"><b>⚠ Fehlerquelle:</b> Soli wird auf die <b>Steuer</b> gerechnet, nicht auf den Gewinn.</div>
+    </div>
+
+    <div class="card">
+      <span class="num">03</span>
+      <h3>Gewerbesteuer <small>GewSt</small></h3>
+      <div class="rate">3,5&nbsp;% · HS</div>
+      <ul>
+        <li>Steuermesszahl <strong>3,5&nbsp;%</strong> (bundeseinheitlich)</li>
+        <li>× <strong>Hebesatz</strong> der Gemeinde</li>
+      </ul>
+      <div class="formula">$$\text{GewSt} = \text{Gewerbeertrag} \times 3,5\% \times \text{HS}$$</div>
+      <span class="pill-note">Hebesatz niedrig → Unternehmen anlocken</span>
+    </div>
+
+  </div>
+
+  <section class="calc">
+    <h2 class="sec-h">Steuern auf 1&nbsp;€ Gewinn <span style="font-family:'Spline Sans';font-size:.6em;font-weight:500;color:var(--ink-soft);">(Hebesatz 400&nbsp;%)</span></h2>
+    <table>
+      <thead>
+        <tr><th>Steuer</th><th>Rechnung</th><th>Betrag</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>KSt</td><td>$1\,€ \times 15\%$</td><td>0,1500&nbsp;€</td></tr>
+        <tr><td>SolZ</td><td>$0,15\,€ \times 5,5\%$</td><td>0,00825&nbsp;€</td></tr>
+        <tr><td>GewSt</td><td>$1\,€ \times 3,5\% \times 400\%$</td><td>0,1400&nbsp;€</td></tr>
+        <tr class="total"><td>Summe</td><td>≈ 30&nbsp;%</td><td>≈ 0,298&nbsp;€</td></tr>
+      </tbody>
+    </table>
+    <div class="takeaway">
+      <span>niedriger Hebesatz (~260&nbsp;%) → <b>≈ 25&nbsp;%</b></span>
+      <span>Gesamtbelastung je nach Hebesatz <b>ca. 25–30&nbsp;%</b></span>
+    </div>
+  </section>
+
+  <section class="schema">
+    <h2>Schema</h2>
+<pre>
+Gewinn        <span class="op">× 15 %</span>                  <span class="res">→ KSt</span>
+KSt           <span class="op">× 5,5 %</span>                 <span class="res">→ SolZ</span>
+Gewerbeertrag <span class="op">× 3,5 % × Hebesatz</span>      <span class="res">→ GewSt</span>
+───────────────────────────────────────────
+KSt + SolZ + GewSt                  <span class="fin">→ ERTRAGSTEUERN</span>
+</pre>
+  </section>
+
+  <footer>
+    <span>BWL · Klausurvorbereitung</span>
+    <span>Ertragsteuern Kapitalgesellschaft</span>
+  </footer>
+
+</div>
+
+<script>
+  window.addEventListener("DOMContentLoaded", function(){
+    renderMathInElement(document.body, {
+      delimiters:[
+        {left:"$$",right:"$$",display:true},
+        {left:"$",right:"$",display:false}
+      ],
+      throwOnError:false
+    });
+  });
+</script>
+</body>
+</html>
