@@ -3,12 +3,12 @@ window.CRASHVAULT_REGISTRY = {
   "modules": [
     {
       "id": "bwl",
-      "name": "BWL Klausurvorbereitung",
+      "name": "BWL",
       "color": "#38bdf8",
       "createdAt": "2026-06-02T17:51:56.892Z"
     }
   ],
   "_meta": {
-    "lastSaved": "2026-06-02T18:36:43.612Z"
+    "lastSaved": "2026-06-02T18:38:06.998Z"
   }
 };
