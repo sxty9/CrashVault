@@ -412,6 +412,42 @@ function openAnkiDialog(tile, topic) {
   renderAnkiCards();
 }
 
+// Run `fn` (typically a re-render) while preserving the user's focus and caret
+// position inside the open Anki dialog. Without this, a pull-triggered re-render
+// while a textarea is focused would yank the cursor away mid-edit. We snapshot
+// the focused card id + field (front/back) + selection range, run the render,
+// then restore on the newly-built DOM. If the focused card no longer exists
+// (e.g. removed) we silently drop the restore — no error.
+function preserveDialogFocus(fn) {
+  const dlg = $("#ankiDlg");
+  if (!dlg.open) { fn(); return; }
+  const active = document.activeElement;
+  let snap = null;
+  if (active && active.tagName === "TEXTAREA" && dlg.contains(active)) {
+    const item = active.closest(".card-item");
+    const field = active.closest(".front") ? "front" : (active.closest(".back") ? "back" : null);
+    if (item && field) {
+      snap = {
+        cardId: item.dataset.id,
+        field,
+        selStart: active.selectionStart,
+        selEnd: active.selectionEnd
+      };
+    }
+  }
+  fn();
+  if (!snap) return;
+  const newItem = dlg.querySelector(`.card-item[data-id="${CSS.escape(snap.cardId)}"]`);
+  if (!newItem) return;
+  const newTA = newItem.querySelector(`.${snap.field} textarea`);
+  if (!newTA) return;
+  newTA.focus();
+  try {
+    const len = newTA.value.length;
+    newTA.setSelectionRange(Math.min(snap.selStart, len), Math.min(snap.selEnd, len));
+  } catch (e) { /* ignore — focus is the important part */ }
+}
+
 function renderAnkiCards() {
   if (!ankiContext) return;
   const { topic } = ankiContext;
@@ -623,8 +659,9 @@ async function runAnkiSync(opts) {
       renderAll(); // CV state changed — refresh tiles
       // If the per-topic Anki dialog is open, its DOM is reading from the
       // same `topic.cards` references we just mutated — re-render so the
-      // user sees the pulled-in content without having to close + reopen.
-      if (ankiContext && $("#ankiDlg").open) renderAnkiCards();
+      // user sees the pulled-in content. Preserve focus + caret position so
+      // an actively-edited textarea doesn't lose the user's cursor.
+      if (ankiContext && $("#ankiDlg").open) preserveDialogFocus(renderAnkiCards);
     }
     if (!opts.silent || result.pulled) toast(`Anki: ${summary} ✓`, "ok");
   } catch (e) {
