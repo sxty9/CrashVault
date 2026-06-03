@@ -45,12 +45,6 @@ window.CRASHVAULT_MODULE = {
                 "front": "Eine neue Karte von Vault",
                 "back": "",
                 "mod": 1780488478065
-              },
-              {
-                "id": "3oclxhyhw0qo",
-                "front": "Karte Xa",
-                "back": "Wert Vault",
-                "mod": 1780488722633
               }
             ]
           },
@@ -474,6 +468,6 @@ window.CRASHVAULT_MODULE = {
     }
   ],
   "_meta": {
-    "lastSaved": "2026-06-03T12:12:42.979Z"
+    "lastSaved": "2026-06-03T12:29:38.581Z"
   }
 };
