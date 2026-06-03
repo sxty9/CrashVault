@@ -763,7 +763,23 @@ function openChangesDialog(plan) {
 }
 
 $("#btnAnkiSync").addEventListener("click", () => runAnkiSync({ manual: true }));
-window.addEventListener("focus", refreshAnkiButton);
+
+// ------------------------------------------------------------
+// Pull triggers — AnkiConnect doesn't push to us, so we poll. We piggy-back
+// on scheduleAnkiSync so the user's autoSyncOnSave toggle controls *both*
+// directions consistently: if you turn auto-sync off, no background pulls
+// happen either — the manual button stays the only path.
+//   - on tab focus       — handles "I switched from Anki back to the browser"
+//   - every 30s while focused — handles "I'm editing in another window of Anki"
+// ------------------------------------------------------------
+const ANKI_POLL_MS = 30000;
+window.addEventListener("focus", () => {
+  refreshAnkiButton();
+  scheduleAnkiSync();
+});
+setInterval(() => {
+  if (document.hasFocus()) scheduleAnkiSync();
+}, ANKI_POLL_MS);
 
 (async function init() {
   refreshAnkiButton();
