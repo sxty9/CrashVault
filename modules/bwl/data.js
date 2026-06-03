@@ -9,9 +9,9 @@ window.CRASHVAULT_MODULE = {
       "title": "Klausurrelevante Themen",
       "x": 44,
       "y": 24,
-      "w": 880,
-      "h": 760,
-      "z": 5,
+      "w": 766,
+      "h": 851,
+      "z": 8,
       "state": {
         "topics": [
           {
@@ -32,6 +32,12 @@ window.CRASHVAULT_MODULE = {
                 "id": "m94piar1mmzp",
                 "front": "dsds",
                 "back": "sdsds"
+              },
+              {
+                "id": "qokpqrhf21ek",
+                "front": "ANKI Connect Test karte",
+                "back": "lets go",
+                "mod": 1780483761562
               }
             ]
           },
@@ -398,11 +404,11 @@ window.CRASHVAULT_MODULE = {
       "id": "tile_bwl_sprueche",
       "type": "spruch-list",
       "title": "Ludolph Sprüche",
-      "x": 1142,
-      "y": 21,
+      "x": 891,
+      "y": 31,
       "w": 480,
       "h": 760,
-      "z": 4,
+      "z": 9,
       "state": {
         "items": [
           {
@@ -455,6 +461,6 @@ window.CRASHVAULT_MODULE = {
     }
   ],
   "_meta": {
-    "lastSaved": "2026-06-02T20:26:57.474Z"
+    "lastSaved": "2026-06-03T10:55:04.199Z"
   }
 };
