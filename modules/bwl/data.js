@@ -36,9 +36,9 @@ window.CRASHVAULT_MODULE = {
               },
               {
                 "id": "qokpqrhf21ek",
-                "front": "ANKI Connect Test karte",
+                "front": "ANKI Connect Test karte 22",
                 "back": "lets go",
-                "mod": 1780483761562
+                "mod": 1780515621295
               },
               {
                 "id": "ywxd1nyyv63f",
@@ -468,6 +468,6 @@ window.CRASHVAULT_MODULE = {
     }
   ],
   "_meta": {
-    "lastSaved": "2026-06-03T12:29:38.581Z"
+    "lastSaved": "2026-06-03T19:40:39.985Z"
   }
 };
