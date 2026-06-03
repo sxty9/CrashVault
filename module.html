@@ -619,7 +619,13 @@ async function runAnkiSync(opts) {
     if (result.moved)   parts.push(`⇄${result.moved}`);
     if (result.deleted) parts.push(`✕${result.deleted}`);
     const summary = parts.length ? parts.join(" · ") : "alles aktuell";
-    if (result.pulled) renderAll(); // CV state changed — refresh tiles
+    if (result.pulled) {
+      renderAll(); // CV state changed — refresh tiles
+      // If the per-topic Anki dialog is open, its DOM is reading from the
+      // same `topic.cards` references we just mutated — re-render so the
+      // user sees the pulled-in content without having to close + reopen.
+      if (ankiContext && $("#ankiDlg").open) renderAnkiCards();
+    }
     if (!opts.silent || result.pulled) toast(`Anki: ${summary} ✓`, "ok");
   } catch (e) {
     if (!opts.silent) toast("Anki-Sync fehlgeschlagen: " + e.message, "err");
