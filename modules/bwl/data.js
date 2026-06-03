@@ -30,8 +30,9 @@ window.CRASHVAULT_MODULE = {
             "cards": [
               {
                 "id": "m94piar1mmzp",
-                "front": "dsds",
-                "back": "sdsds"
+                "front": "Version CrashVault",
+                "back": "sds",
+                "mod": 1780488149397
               },
               {
                 "id": "qokpqrhf21ek",
@@ -461,6 +462,6 @@ window.CRASHVAULT_MODULE = {
     }
   ],
   "_meta": {
-    "lastSaved": "2026-06-03T10:55:04.199Z"
+    "lastSaved": "2026-06-03T12:02:44.784Z"
   }
 };
