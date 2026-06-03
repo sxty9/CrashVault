@@ -39,6 +39,18 @@ window.CRASHVAULT_MODULE = {
                 "front": "ANKI Connect Test karte",
                 "back": "lets go",
                 "mod": 1780483761562
+              },
+              {
+                "id": "ywxd1nyyv63f",
+                "front": "Eine neue Karte von Vault",
+                "back": "",
+                "mod": 1780488478065
+              },
+              {
+                "id": "3oclxhyhw0qo",
+                "front": "Karte Xa",
+                "back": "Wert Vault",
+                "mod": 1780488722633
               }
             ]
           },
@@ -462,6 +474,6 @@ window.CRASHVAULT_MODULE = {
     }
   ],
   "_meta": {
-    "lastSaved": "2026-06-03T12:07:23.576Z"
+    "lastSaved": "2026-06-03T12:12:42.979Z"
   }
 };
