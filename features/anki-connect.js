@@ -50,24 +50,26 @@
     return data.result;
   }
 
-  // ============================================================
-  // Normalize a spruch front/back pair so that splitSpruch's
-  // comma-on-front artifact doesn't accumulate through Anki round-trips.
-  // splitSpruch always pushes the comma to the front side ("ABC," / "DEFG").
-  // Anki stores literally what we send, so the user editing front to "ABC"
-  // and us re-pulling+re-pushing would otherwise re-add the comma. Strip
-  // any leading/trailing comma fluff on both sides — the next splitSpruch
-  // is the authoritative comma placement.
-  function normalizeSpruchPair(front, back) {
-    return {
-      front: (front || "").replace(/^,\s*|,\s*$/g, "").trim(),
-      back:  (back  || "").replace(/^,\s*|,\s*$/g, "").trim()
-    };
+  // Glue-aware rejoin for spruch front+back: if the front already ends with a
+  // comma (typical when splitSpruch placed the split AFTER a comma), join with
+  // a single space; otherwise add ", ". Ensures we never produce ",, ".
+  function joinSpruch(front, back) {
+    const f = String(front || "");
+    const b = String(back  || "");
+    const glue = f.endsWith(",") ? " " : ", ";
+    return (f + glue + b).trim();
   }
 
   // ============================================================
   // Collect every "syncable card" from a module's tiles
   // ============================================================
+  // Note on spruch: CV's splitSpruch is the authoritative split. We compare
+  // CV's split output literally against Anki's stored field values. If a user
+  // edits Anki to a different split (e.g. removes the trailing comma on
+  // front), the pull rejoins their content into s.text, the next collectCards
+  // re-runs splitSpruch, and the resulting CV-canonical split gets pushed
+  // back to Anki — which is exactly the round-trip semantic the user asked
+  // for.
   function collectCards(moduleState, deckRoot) {
     const out = [];
     for (const tile of (moduleState.tiles || [])) {
@@ -93,22 +95,19 @@
           if (!s.id || !s.text || !s.text.trim()) continue;
           const fb = sp(s.text);
           if (!fb) continue;
-          // Strip splitSpruch's comma artifact so the same content on both
-          // sides compares equal regardless of which side last edited it.
-          const { front, back } = normalizeSpruchPair(fb.front, fb.back);
           out.push({
             cvid: `${moduleState.id}/${tile.id}/${s.id}`,
             deck: [deckRoot, moduleState.name, tile.title || "Sprüche"]
               .filter(Boolean).join("::"),
-            front,
-            back,
+            front: fb.front,
+            back: fb.back,
             mod: s.mod || 0,
             tileType: tile.type,
+            // Pull rejoins front+back so the next collectCards' splitSpruch
+            // produces CV's canonical split — which then gets pushed to Anki
+            // on the follow-up sync, making CV authoritative.
             writeBack: (newFront, newBack) => {
-              // Mirror the normalize step on incoming Anki content; rejoin so
-              // splitSpruch on the next sync produces the same split.
-              const n = normalizeSpruchPair(newFront, newBack);
-              s.text = (n.front + ", " + n.back).trim();
+              s.text = joinSpruch(newFront, newBack);
               s.mod = Date.now();
             }
           });
@@ -116,6 +115,36 @@
       }
     }
     return out;
+  }
+
+  // ============================================================
+  // Resolve a deck name back to a CV tile (and topic, for topic-list tiles).
+  // Deck names produced by collectCards have the shape
+  //   <deckRoot>::<moduleName>::<tileTitle>[::<topicTitle>]
+  // so the reverse parse just splits on "::" and matches by exact title.
+  // Returns null if the deck doesn't belong to this module or no matching
+  // tile/topic exists — those are silently skipped on import.
+  // ============================================================
+  function findImportTarget(moduleState, deckName, deckRoot) {
+    const segments = (deckName || "").split("::");
+    if (segments[0] !== deckRoot) return null;
+    if (segments[1] !== moduleState.name) return null;
+    const tileTitle = segments[2];
+    if (!tileTitle) return null;
+    const tile = (moduleState.tiles || []).find(t => (t.title || "") === tileTitle);
+    if (!tile) return null;
+    if (tile.type === "topic-list") {
+      const topicTitle = segments[3];
+      if (!topicTitle) return null;
+      const topic = (tile.state?.topics || []).find(x => (x.title || "") === topicTitle);
+      if (!topic) return null;
+      return { type: "topic-list", tile, topic };
+    }
+    if (tile.type === "spruch-list") {
+      if (segments.length !== 3) return null;
+      return { type: "spruch-list", tile };
+    }
+    return null;
   }
 
   // ============================================================
@@ -129,27 +158,66 @@
 
     const decksToCreate = [...new Set(cvCards.map(c => c.deck))];
 
-    // Pull ALL CV-managed notes from Anki — we then scope them to this module
-    // by cvid prefix. Cross-module notes are intentionally ignored: syncing
-    // module B must never delete module A's cards in Anki.
-    const allNoteIds = await invoke(url, "findNotes", { query: "tag:crashvault" });
-    const allNotes = allNoteIds.length
-      ? await invoke(url, "notesInfo", { notes: allNoteIds })
+    // Find all notes that could be relevant:
+    //   1. Anything tagged "crashvault" (managed) — across all modules
+    //   2. Anything sitting in our module's deck subtree (potential imports)
+    // Notes in (2) but not (1) are user-created in Anki and need to be pulled
+    // into CV. We fetch deckNames first because Anki search has no clean
+    // "match all sub-decks" syntax — we OR the explicit deck names instead.
+    const allManagedIds = await invoke(url, "findNotes", { query: "tag:crashvault" });
+
+    const myModuleRoot = `${deckRoot}::${moduleState.name}`;
+    let importCandidateIds = [];
+    let myDeckQuery = "";
+    try {
+      const allDeckNames = await invoke(url, "deckNames", {});
+      const myDecks = (allDeckNames || []).filter(d =>
+        d === myModuleRoot || d.startsWith(myModuleRoot + "::")
+      );
+      if (myDecks.length) {
+        myDeckQuery = myDecks.map(d => `"deck:${d}"`).join(" OR ");
+        importCandidateIds = await invoke(url, "findNotes", { query: myDeckQuery });
+      }
+    } catch (e) { /* deckNames not available → no imports detected this run */ }
+
+    const combinedIds = [...new Set([...allManagedIds, ...importCandidateIds])];
+    const allNotes = combinedIds.length
+      ? await invoke(url, "notesInfo", { notes: combinedIds })
       : [];
 
-    // Group by cvid first so we can detect duplicates (multiple Anki notes
-    // sharing the same cvid — usually from interrupted retries) and pick a
-    // canonical one (highest mod ts).
-    const allByCvid = new Map(); // cvid → note[]
-    for (const note of allNotes) {
-      const tag = (note.tags || []).find(t => t.startsWith("cvid:"));
-      if (!tag) continue;
-      const cvid = tag.substring(5);
-      if (!allByCvid.has(cvid)) allByCvid.set(cvid, []);
-      allByCvid.get(cvid).push(note);
+    // Deck name per note id — fetch cards in our module's decks once. We need
+    // this for both move detection (managed) and import target resolution
+    // (unmanaged). Cards from other modules aren't here, which is what we want.
+    let deckByNoteId = new Map();
+    if (myDeckQuery) {
+      try {
+        const ankiCardIds = await invoke(url, "findCards", { query: myDeckQuery });
+        if (ankiCardIds.length) {
+          const cardInfos = await invoke(url, "cardsInfo", { cards: ankiCardIds });
+          for (const ci of cardInfos) {
+            if (!deckByNoteId.has(ci.note)) deckByNoteId.set(ci.note, ci.deckName);
+          }
+        }
+      } catch (e) { /* non-fatal */ }
     }
 
-    // Scope to this module + collect duplicate-cleanup work
+    // Group managed notes (cvid-tagged) by cvid, picking canonical (highest
+    // mod); the others are stray duplicates that get silent-cleaned at apply.
+    const allByCvid = new Map(); // cvid → note[]
+    const importCandidates = []; // notes with no cvid tag — candidates for pull-import
+    for (const note of allNotes) {
+      const tag = (note.tags || []).find(t => t.startsWith("cvid:"));
+      if (tag) {
+        const cvid = tag.substring(5);
+        if (!allByCvid.has(cvid)) allByCvid.set(cvid, []);
+        allByCvid.get(cvid).push(note);
+      } else {
+        // Unmanaged — possibly Anki-side new card we should import
+        importCandidates.push(note);
+      }
+    }
+
+    // Scope managed to this module + collect duplicate-cleanup work
     const ankiByCvid = new Map();
     const dupeDeletes = [];
     for (const [cvid, list] of allByCvid) {
@@ -165,26 +233,11 @@
       for (let i = 1; i < list.length; i++) dupeDeletes.push(list[i].noteId);
     }
 
-    // Deck info for move detection. Fetch all CV cards but only index the ones
-    // we actually care about (this module's notes).
-    let deckByNoteId = new Map();
-    if (ankiByCvid.size) {
-      const ourNoteIds = new Set(Array.from(ankiByCvid.values()).map(a => a.ankiId));
-      const ankiCardIds = await invoke(url, "findCards", { query: "tag:crashvault" });
-      if (ankiCardIds.length) {
-        const cardInfos = await invoke(url, "cardsInfo", { cards: ankiCardIds });
-        for (const ci of cardInfos) {
-          if (!ourNoteIds.has(ci.note)) continue;
-          if (!deckByNoteId.has(ci.note)) deckByNoteId.set(ci.note, ci.deckName);
-        }
-      }
-    }
-
     const plan = {
       url, deckRoot,
       decksToCreate,
-      added: [],
-      updated: [],   // each: { direction: "push" | "pull", cvid, ... }
+      added: [],     // direction "push" (CV→Anki addNote) or "pull" (Anki→CV import)
+      updated: [],   // direction "push" or "pull"
       deleted: [],
       moves: [],     // silent — not user-confirmable
       dupeDeletes    // silent cleanup of stray Anki notes with same cvid
@@ -192,10 +245,59 @@
 
     const cvCvids = new Set(cvCards.map(c => c.cvid));
 
+    // Import discovery: unmanaged notes in our module's deck tree become
+    // pull-direction added items. We build the cvid for the new CV card now
+    // so applyPlan can both insert the card and tag the Anki note in one go.
+    for (const note of importCandidates) {
+      const deck = deckByNoteId.get(note.noteId);
+      if (!deck) continue; // no deck info (shouldn't happen) → skip
+      const target = findImportTarget(moduleState, deck, deckRoot);
+      if (!target) continue; // not addressable in this module — skip silently
+      const ankiFront = note.fields?.Front?.value || "";
+      const ankiBack  = note.fields?.Back?.value  || "";
+      const newCardId = window.CV.uid();
+      let cvid;
+      let applyImport;
+      if (target.type === "topic-list") {
+        cvid = `${moduleState.id}/${target.tile.id}/${target.topic.id}/${newCardId}`;
+        applyImport = () => {
+          target.topic.cards = target.topic.cards || [];
+          target.topic.cards.push({
+            id: newCardId,
+            front: ankiFront,
+            back: ankiBack,
+            mod: Date.now()
+          });
+        };
+      } else {
+        cvid = `${moduleState.id}/${target.tile.id}/${newCardId}`;
+        applyImport = () => {
+          target.tile.state = target.tile.state || {};
+          target.tile.state.items = target.tile.state.items || [];
+          target.tile.state.items.push({
+            id: newCardId,
+            text: joinSpruch(ankiFront, ankiBack),
+            mod: Date.now()
+          });
+        };
+      }
+      plan.added.push({
+        direction: "pull",
+        cvid,
+        ankiId: note.noteId,
+        deck,
+        front: ankiFront,
+        back:  ankiBack,
+        tileType: target.type,
+        applyImport
+      });
+    }
+
     for (const card of cvCards) {
       const an = ankiByCvid.get(card.cvid);
       if (!an) {
         plan.added.push({
+          direction: "push",
           cvid: card.cvid,
           deck: card.deck,
           front: card.front,
@@ -267,23 +369,41 @@
       try { await invoke(url, "createDeck", { deck: d }); } catch (e) { /* exists is fine */ }
     }
 
-    let added = 0, updated = 0, pulled = 0, deleted = 0, moved = 0;
+    let added = 0, imported = 0, updated = 0, pulled = 0, deleted = 0, moved = 0;
 
-    // Adds — per-item try/catch so one bad note doesn't abort the rest
+    // Adds — per-item try/catch so one bad note doesn't abort the rest.
+    // Two directions:
+    //   push: CV → Anki, create a new Anki note with the cvid tag
+    //   pull: Anki → CV, insert the new card into CV state and tag the
+    //         existing Anki note as managed (addTags writes a new cvid)
     for (const item of (plan.added || [])) {
       try {
-        await invoke(url, "addNote", {
-          note: {
-            deckName: item.deck,
-            modelName: "Basic",
-            fields: { Front: item.front, Back: item.back },
-            tags: ["crashvault", "cvid:" + item.cvid],
-            options: { allowDuplicate: true }
-          }
-        });
-        added++;
+        if (item.direction === "pull") {
+          item.applyImport();
+          await invoke(url, "addTags", {
+            notes: [item.ankiId],
+            tags: "crashvault cvid:" + item.cvid
+          });
+          imported++;
+          if (ctx && ctx.markDirty) ctx.markDirty();
+        } else {
+          await invoke(url, "addNote", {
+            note: {
+              deckName: item.deck,
+              modelName: "Basic",
+              fields: { Front: item.front, Back: item.back },
+              tags: ["crashvault", "cvid:" + item.cvid],
+              options: { allowDuplicate: true }
+            }
+          });
+          added++;
+        }
       } catch (e) {
-        errors.push({ op: "add", cvid: item.cvid, message: e.message });
+        errors.push({
+          op: item.direction === "pull" ? "import" : "add",
+          cvid: item.cvid,
+          message: e.message
+        });
       }
     }
 
@@ -340,7 +460,7 @@
       }
     }
 
-    return { added, updated, pulled, deleted, moved, errors };
+    return { added, imported, updated, pulled, deleted, moved, errors };
   }
 
   // Backwards-compat one-shot path (push+pull everything, no dialog).

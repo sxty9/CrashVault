@@ -592,7 +592,6 @@ const ANKI_DEBOUNCE_MS = 700;
 let ankiSyncTimer = null;
 let ankiSyncRunning = false;
 let ankiSyncReRunNeeded = false;
-let suppressNextScheduleFromPull = false;
 
 function ankiFeatureState() {
   const feat = window.CV_FEATURES && window.CV_FEATURES["anki-connect"];
@@ -605,8 +604,12 @@ function refreshAnkiButton() {
   $("#btnAnkiSync").style.display = ankiFeatureState() ? "" : "none";
 }
 
+// The pull-suppress flag is intentionally gone — for spruch tiles a pull
+// mutates s.text and the next sync's splitSpruch will produce a different
+// front/back than what Anki stores, which is exactly what should be pushed
+// back to make CV's split authoritative. For topic-list tiles the second
+// sync just computes "no diff" and returns idle, so there's no harm.
 function scheduleAnkiSync() {
-  if (suppressNextScheduleFromPull) return; // pull→markDirty must not echo
   const ctx = ankiFeatureState();
   if (!ctx) return;
   if (!ctx.st.config.autoSyncOnSave) return; // manual-only mode
@@ -646,23 +649,18 @@ async function runAnkiSync(opts) {
       return;
     }
 
-    const wrappedCtx = {
-      markDirty: () => {
-        suppressNextScheduleFromPull = true;
-        try { markDirty(); } finally { suppressNextScheduleFromPull = false; }
-      }
-    };
-    const result = await ctx.feat.applyPlan(plan, wrappedCtx);
+    const result = await ctx.feat.applyPlan(plan, { markDirty });
     const parts = [];
-    if (result.added)   parts.push(`+${result.added}`);
-    if (result.updated) parts.push(`↑${result.updated}`);
-    if (result.pulled)  parts.push(`↓${result.pulled}`);
-    if (result.moved)   parts.push(`⇄${result.moved}`);
-    if (result.deleted) parts.push(`✕${result.deleted}`);
+    if (result.added)    parts.push(`+${result.added}`);
+    if (result.imported) parts.push(`⇐${result.imported}`);
+    if (result.updated)  parts.push(`↑${result.updated}`);
+    if (result.pulled)   parts.push(`↓${result.pulled}`);
+    if (result.moved)    parts.push(`⇄${result.moved}`);
+    if (result.deleted)  parts.push(`✕${result.deleted}`);
     const errCount = (result.errors || []).length;
     if (errCount) parts.push(`⚠${errCount}`);
     const summary = parts.length ? parts.join(" · ") : "alles aktuell";
-    if (result.pulled) {
+    if (result.pulled || result.imported) {
       renderAll(); // CV state changed — refresh tiles
       // If the per-topic Anki dialog is open, its DOM is reading from the
       // same `topic.cards` references we just mutated — re-render so the
@@ -716,9 +714,14 @@ function openChangesDialog(plan) {
     function lastSegment(deck) { return (deck || "").split("::").pop() || ""; }
 
     function addedItem(item, idx) {
+      // "Neue" combines CV→Anki creations (push) and Anki→CV imports (pull).
+      // The direction badge tells the two apart at a glance.
+      const dirClass = item.direction === "pull" ? "pull" : "push";
+      const dirIcon  = item.direction === "pull" ? "← Anki" : "→ Anki";
       return `<input type="checkbox" data-idx="${idx}" checked>
               <span class="ch-text">${escapeText(previewFront(item.front))}</span>
-              <span class="ch-deck" title="${escapeAttr(item.deck)}">${escapeText(lastSegment(item.deck))}</span>`;
+              <span class="ch-dir ${dirClass}">${dirIcon}</span>
+              <span class="ch-deck" title="${escapeAttr(item.deck || "")}">${escapeText(lastSegment(item.deck))}</span>`;
     }
     function updatedItem(item, idx) {
       const dirClass = item.direction === "push" ? "push" : "pull";
