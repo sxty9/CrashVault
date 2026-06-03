@@ -10,13 +10,16 @@
 // Conflict resolution: last-write-wins by mod timestamp.
 //
 // API surface for the module page:
-//   computePlan(moduleState, config) -> { added, updated, deleted, url, deckRoot, moves }
+//   computePlan(moduleState, config) -> { added, updated, deleted, moves,
+//                                         dupeDeletes, url, deckRoot }
 //     Pure read; no Anki mutations. `updated` items carry a `direction`
 //     field ("push" = CV->Anki, "pull" = Anki->CV) so the confirmation
 //     dialog can mix both directions in one list.
-//   applyPlan(plan, ctx) -> { added, updated, pulled, deleted, moved }
+//   applyPlan(plan, ctx) -> { added, updated, pulled, deleted, moved,
+//                              errors }
 //     Mutates Anki (and CV for pulls). Caller supplies the (possibly
-//     user-filtered) plan returned by computePlan.
+//     user-filtered) plan returned by computePlan. Per-op try/catch so a
+//     single failing card doesn't abandon the rest.
 
 (function () {
   "use strict";
@@ -48,6 +51,21 @@
   }
 
   // ============================================================
+  // Normalize a spruch front/back pair so that splitSpruch's
+  // comma-on-front artifact doesn't accumulate through Anki round-trips.
+  // splitSpruch always pushes the comma to the front side ("ABC," / "DEFG").
+  // Anki stores literally what we send, so the user editing front to "ABC"
+  // and us re-pulling+re-pushing would otherwise re-add the comma. Strip
+  // any leading/trailing comma fluff on both sides — the next splitSpruch
+  // is the authoritative comma placement.
+  function normalizeSpruchPair(front, back) {
+    return {
+      front: (front || "").replace(/^,\s*|,\s*$/g, "").trim(),
+      back:  (back  || "").replace(/^,\s*|,\s*$/g, "").trim()
+    };
+  }
+
+  // ============================================================
   // Collect every "syncable card" from a module's tiles
   // ============================================================
   function collectCards(moduleState, deckRoot) {
@@ -75,17 +93,22 @@
           if (!s.id || !s.text || !s.text.trim()) continue;
           const fb = sp(s.text);
           if (!fb) continue;
+          // Strip splitSpruch's comma artifact so the same content on both
+          // sides compares equal regardless of which side last edited it.
+          const { front, back } = normalizeSpruchPair(fb.front, fb.back);
           out.push({
             cvid: `${moduleState.id}/${tile.id}/${s.id}`,
             deck: [deckRoot, moduleState.name, tile.title || "Sprüche"]
               .filter(Boolean).join("::"),
-            front: fb.front,
-            back: fb.back,
+            front,
+            back,
             mod: s.mod || 0,
             tileType: tile.type,
-            writeBack: (front, back) => {
-              const glue = front.endsWith(",") ? " " : ", ";
-              s.text = (front + glue + back).replace(/,\s*,\s*/, ", ");
+            writeBack: (newFront, newBack) => {
+              // Mirror the normalize step on incoming Anki content; rejoin so
+              // splitSpruch on the next sync produces the same split.
+              const n = normalizeSpruchPair(newFront, newBack);
+              s.text = (n.front + ", " + n.back).trim();
               s.mod = Date.now();
             }
           });
@@ -102,39 +125,59 @@
     const url = config.url || "http://127.0.0.1:8765";
     const deckRoot = config.deckRoot || "CrashVault";
     const cvCards = collectCards(moduleState, deckRoot);
+    const modulePrefix = moduleState.id + "/";
 
     const decksToCreate = [...new Set(cvCards.map(c => c.deck))];
 
-    // Pull all CV-managed notes from Anki in one query
-    const noteIds = await invoke(url, "findNotes", { query: "tag:crashvault" });
-    const notes = noteIds.length
-      ? await invoke(url, "notesInfo", { notes: noteIds })
+    // Pull ALL CV-managed notes from Anki — we then scope them to this module
+    // by cvid prefix. Cross-module notes are intentionally ignored: syncing
+    // module B must never delete module A's cards in Anki.
+    const allNoteIds = await invoke(url, "findNotes", { query: "tag:crashvault" });
+    const allNotes = allNoteIds.length
+      ? await invoke(url, "notesInfo", { notes: allNoteIds })
       : [];
 
-    // Index by cvid + fetch deck-per-note (needed for move detection)
-    const ankiByCvid = new Map();
-    for (const note of notes) {
+    // Group by cvid first so we can detect duplicates (multiple Anki notes
+    // sharing the same cvid — usually from interrupted retries) and pick a
+    // canonical one (highest mod ts).
+    const allByCvid = new Map(); // cvid → note[]
+    for (const note of allNotes) {
       const tag = (note.tags || []).find(t => t.startsWith("cvid:"));
       if (!tag) continue;
-      ankiByCvid.set(tag.substring(5), {
-        ankiId: note.noteId,
-        front: note.fields?.Front?.value || "",
-        back:  note.fields?.Back?.value  || "",
-        mod:   note.mod || 0
-      });
+      const cvid = tag.substring(5);
+      if (!allByCvid.has(cvid)) allByCvid.set(cvid, []);
+      allByCvid.get(cvid).push(note);
     }
 
-    // Deck info for all those cards — one batch call
-    const ankiCardIds = notes.length
-      ? await invoke(url, "findCards", { query: "tag:crashvault" })
-      : [];
-    let cardInfos = [];
-    if (ankiCardIds.length) {
-      cardInfos = await invoke(url, "cardsInfo", { cards: ankiCardIds });
+    // Scope to this module + collect duplicate-cleanup work
+    const ankiByCvid = new Map();
+    const dupeDeletes = [];
+    for (const [cvid, list] of allByCvid) {
+      if (!cvid.startsWith(modulePrefix)) continue; // other modules — hands off
+      list.sort((a, b) => (b.mod || 0) - (a.mod || 0) || (b.noteId || 0) - (a.noteId || 0));
+      const c = list[0];
+      ankiByCvid.set(cvid, {
+        ankiId: c.noteId,
+        front: c.fields?.Front?.value || "",
+        back:  c.fields?.Back?.value  || "",
+        mod:   c.mod || 0
+      });
+      for (let i = 1; i < list.length; i++) dupeDeletes.push(list[i].noteId);
     }
-    const deckByNoteId = new Map();
-    for (const ci of cardInfos) {
-      if (!deckByNoteId.has(ci.note)) deckByNoteId.set(ci.note, ci.deckName);
+
+    // Deck info for move detection. Fetch all CV cards but only index the ones
+    // we actually care about (this module's notes).
+    let deckByNoteId = new Map();
+    if (ankiByCvid.size) {
+      const ourNoteIds = new Set(Array.from(ankiByCvid.values()).map(a => a.ankiId));
+      const ankiCardIds = await invoke(url, "findCards", { query: "tag:crashvault" });
+      if (ankiCardIds.length) {
+        const cardInfos = await invoke(url, "cardsInfo", { cards: ankiCardIds });
+        for (const ci of cardInfos) {
+          if (!ourNoteIds.has(ci.note)) continue;
+          if (!deckByNoteId.has(ci.note)) deckByNoteId.set(ci.note, ci.deckName);
+        }
+      }
     }
 
     const plan = {
@@ -143,7 +186,8 @@
       added: [],
       updated: [],   // each: { direction: "push" | "pull", cvid, ... }
       deleted: [],
-      moves: []      // applied silently — not user-confirmable
+      moves: [],     // silent — not user-confirmable
+      dupeDeletes    // silent cleanup of stray Anki notes with same cvid
     };
 
     const cvCvids = new Set(cvCards.map(c => c.cvid));
@@ -200,7 +244,8 @@
       }
     }
 
-    // Deletes — anki has cvid that CV doesn't
+    // Deletes — only within this module's namespace (scope already applied
+    // when building ankiByCvid). cvids in ankiByCvid that aren't in CV → gone.
     for (const [cvid, an] of ankiByCvid) {
       if (!cvCvids.has(cvid)) {
         plan.deleted.push({ cvid, ankiId: an.ankiId, front: an.front });
@@ -215,47 +260,64 @@
   // ============================================================
   async function applyPlan(plan, ctx) {
     const url = plan.url;
+    const errors = [];
 
     // Decks (idempotent)
     for (const d of (plan.decksToCreate || [])) {
-      try { await invoke(url, "createDeck", { deck: d }); } catch (e) { /* exists */ }
+      try { await invoke(url, "createDeck", { deck: d }); } catch (e) { /* exists is fine */ }
     }
 
     let added = 0, updated = 0, pulled = 0, deleted = 0, moved = 0;
 
+    // Adds — per-item try/catch so one bad note doesn't abort the rest
     for (const item of (plan.added || [])) {
-      await invoke(url, "addNote", {
-        note: {
-          deckName: item.deck,
-          modelName: "Basic",
-          fields: { Front: item.front, Back: item.back },
-          tags: ["crashvault", "cvid:" + item.cvid],
-          options: { allowDuplicate: true }
-        }
-      });
-      added++;
-    }
-
-    for (const item of (plan.updated || [])) {
-      if (item.direction === "push") {
-        await invoke(url, "updateNoteFields", {
-          note: { id: item.ankiId, fields: { Front: item.front, Back: item.back } }
+      try {
+        await invoke(url, "addNote", {
+          note: {
+            deckName: item.deck,
+            modelName: "Basic",
+            fields: { Front: item.front, Back: item.back },
+            tags: ["crashvault", "cvid:" + item.cvid],
+            options: { allowDuplicate: true }
+          }
         });
-        updated++;
-      } else {
-        // Pull Anki → CV
-        item.writeBack(item.front, item.back);
-        pulled++;
-        if (ctx && ctx.markDirty) ctx.markDirty();
+        added++;
+      } catch (e) {
+        errors.push({ op: "add", cvid: item.cvid, message: e.message });
       }
     }
 
-    if ((plan.deleted || []).length) {
-      await invoke(url, "deleteNotes", { notes: plan.deleted.map(d => d.ankiId) });
-      deleted = plan.deleted.length;
+    // Updates (both directions)
+    for (const item of (plan.updated || [])) {
+      try {
+        if (item.direction === "push") {
+          await invoke(url, "updateNoteFields", {
+            note: { id: item.ankiId, fields: { Front: item.front, Back: item.back } }
+          });
+          updated++;
+        } else {
+          // Pull Anki → CV
+          item.writeBack(item.front, item.back);
+          pulled++;
+          if (ctx && ctx.markDirty) ctx.markDirty();
+        }
+      } catch (e) {
+        errors.push({ op: item.direction === "push" ? "update" : "pull", cvid: item.cvid, message: e.message });
+      }
     }
 
-    // Moves: collect all ankiIds we want re-decked, then changeDeck per (deck, [cardIds])
+    // Deletes — batched (one call deletes many). On failure we lose the whole
+    // batch but the next sync re-detects and tries again.
+    if ((plan.deleted || []).length) {
+      try {
+        await invoke(url, "deleteNotes", { notes: plan.deleted.map(d => d.ankiId) });
+        deleted = plan.deleted.length;
+      } catch (e) {
+        errors.push({ op: "delete-batch", message: e.message });
+      }
+    }
+
+    // Moves — one round-trip per moved note (findCards + changeDeck).
     for (const mv of (plan.moves || [])) {
       try {
         const cardIds = await invoke(url, "findCards", { query: `nid:${mv.ankiId}` });
@@ -263,10 +325,22 @@
           await invoke(url, "changeDeck", { cards: cardIds, deck: mv.toDeck });
           moved++;
         }
-      } catch (e) { /* non-fatal */ }
+      } catch (e) {
+        errors.push({ op: "move", cvid: mv.cvid, message: e.message });
+      }
     }
 
-    return { added, updated, pulled, deleted, moved };
+    // Silent duplicate cleanup — older copies of cards that share a cvid with
+    // the canonical note. No user gate; this is purely housekeeping.
+    if ((plan.dupeDeletes || []).length) {
+      try {
+        await invoke(url, "deleteNotes", { notes: plan.dupeDeletes });
+      } catch (e) {
+        errors.push({ op: "dupe-cleanup", message: e.message });
+      }
+    }
+
+    return { added, updated, pulled, deleted, moved, errors };
   }
 
   // Backwards-compat one-shot path (push+pull everything, no dialog).
@@ -352,14 +426,12 @@
       requireConfirm: container.querySelector("[data-field='requireConfirm']").checked
     });
 
-    // Reveal/hide the "manuell bestätigen" row in lockstep with the auto toggle.
     const autoToggle = container.querySelector("[data-field='autoSyncOnSave']");
     const confirmRow = container.querySelector("[data-confirm-row]");
     autoToggle.addEventListener("change", () => {
       confirmRow.style.display = autoToggle.checked ? "none" : "";
     });
 
-    // Live deck-root preview
     const deckInput = container.querySelector("[data-field='deckRoot']");
     const deckPreview = container.querySelector("[data-deckroot-preview]");
     deckInput.addEventListener("input", () => {
@@ -404,6 +476,6 @@
     // Public surface for the module page
     computePlan,
     applyPlan,
-    syncModule  // legacy one-shot
+    syncModule
   };
 })();

@@ -659,6 +659,8 @@ async function runAnkiSync(opts) {
     if (result.pulled)  parts.push(`↓${result.pulled}`);
     if (result.moved)   parts.push(`⇄${result.moved}`);
     if (result.deleted) parts.push(`✕${result.deleted}`);
+    const errCount = (result.errors || []).length;
+    if (errCount) parts.push(`⚠${errCount}`);
     const summary = parts.length ? parts.join(" · ") : "alles aktuell";
     if (result.pulled) {
       renderAll(); // CV state changed — refresh tiles
@@ -668,7 +670,12 @@ async function runAnkiSync(opts) {
       // an actively-edited textarea doesn't lose the user's cursor.
       if (ankiContext && $("#ankiDlg").open) preserveDialogFocus(renderAnkiCards);
     }
-    if (!opts.silent || result.pulled) toast(`Anki: ${summary} ✓`, "ok");
+    if (errCount) {
+      console.warn("AnkiConnect partial sync errors:", result.errors);
+      toast(`Anki: ${summary} — ${errCount} Fehler (Console)`, "warn");
+    } else if (!opts.silent || result.pulled) {
+      toast(`Anki: ${summary} ✓`, "ok");
+    }
   } catch (e) {
     if (!opts.silent) toast("Anki-Sync fehlgeschlagen: " + e.message, "err");
     else console.warn("Anki-Sync still:", e);
@@ -716,8 +723,10 @@ function openChangesDialog(plan) {
     function updatedItem(item, idx) {
       const dirClass = item.direction === "push" ? "push" : "pull";
       const dirIcon  = item.direction === "push" ? "→ Anki" : "← Anki";
+      // item.front is always the *new* value being applied (CV's for push,
+      // Anki's for pull) — that's what the user should see in the preview.
       return `<input type="checkbox" data-idx="${idx}" checked>
-              <span class="ch-text">${escapeText(previewFront(item.direction === "push" ? item.front : item.front))}</span>
+              <span class="ch-text">${escapeText(previewFront(item.front))}</span>
               <span class="ch-dir ${dirClass}">${dirIcon}</span>`;
     }
     function deletedItem(item, idx) {
