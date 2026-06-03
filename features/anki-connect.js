@@ -1,33 +1,27 @@
 // Feature: AnkiConnect
 //
-// Bidirectional sync between a CrashVault module and the user's local Anki via
-// the AnkiConnect add-on (HTTP API on http://127.0.0.1:8765).
+// Bidirectional sync between CrashVault and a local Anki via AnkiConnect.
 //
-// Identity model:
-//   Every CrashVault-managed Anki note carries two tags:
-//     - "crashvault"                    (so we can find them all in one query)
-//     - "cvid:<module/tile/parent/card>" (so we can correlate them back to a CV card)
-//   No localStorage mapping is needed — the tag IS the mapping, and it
-//   survives device changes, Anki re-syncs, and CrashVault clones.
+// Identity model: every CrashVault-managed Anki note carries
+//   - "crashvault"        (so we can find them all)
+//   - "cvid:<m/t/p/c>"    (so we can correlate to a CV card)
+// No localStorage mapping needed.
 //
 // Conflict resolution: last-write-wins by mod timestamp.
-//   CrashVault `card.mod` is set in ms (Date.now()) on every edit.
-//   Anki note `mod` is seconds since epoch; we compare `cvMod` vs `anMod * 1000`.
-//   If CV's timestamp is newer-or-equal → push. Otherwise → pull.
-//   Cards without a CV mod (legacy / migration data) are treated as mod=0, so
-//   any later Anki edit wins. That's intentional: an unedited migration card
-//   shouldn't overwrite a fresh Anki edit.
 //
-// Deletion semantics:
-//   - Card removed in CV (cvid no longer present): we delete the Anki note.
-//   - Card removed in Anki: not supported in v1 yet — the next sync would
-//     simply re-add it (because we use tag-based identity, not a local
-//     "ever seen" set). Documented in the feature description.
+// API surface for the module page:
+//   computePlan(moduleState, config) -> { added, updated, deleted, url, deckRoot, moves }
+//     Pure read; no Anki mutations. `updated` items carry a `direction`
+//     field ("push" = CV->Anki, "pull" = Anki->CV) so the confirmation
+//     dialog can mix both directions in one list.
+//   applyPlan(plan, ctx) -> { added, updated, pulled, deleted, moved }
+//     Mutates Anki (and CV for pulls). Caller supplies the (possibly
+//     user-filtered) plan returned by computePlan.
 
 (function () {
   "use strict";
 
-  const { escapeText, escapeAttr, toast, saveFeatureState } = window.CV;
+  const { escapeText, escapeAttr, toast } = window.CV;
 
   // ============================================================
   // AnkiConnect transport
@@ -89,10 +83,6 @@
             back: fb.back,
             mod: s.mod || 0,
             tileType: tile.type,
-            // A Spruch is a single text field — pulling back from Anki means
-            // rejoining the front+back. We use ", " if the original split was at
-            // a comma; otherwise a single space. The split logic is idempotent
-            // so the next push will produce the same front/back.
             writeBack: (front, back) => {
               const glue = front.endsWith(",") ? " " : ", ";
               s.text = (front + glue + back).replace(/,\s*,\s*/, ", ");
@@ -106,26 +96,22 @@
   }
 
   // ============================================================
-  // syncModule — the heart
+  // computePlan — pure read, no Anki side-effects
   // ============================================================
-  async function syncModule(moduleState, config, ctx) {
+  async function computePlan(moduleState, config) {
     const url = config.url || "http://127.0.0.1:8765";
     const deckRoot = config.deckRoot || "CrashVault";
     const cvCards = collectCards(moduleState, deckRoot);
 
-    // 1) Ensure all target decks exist. createDeck is idempotent.
-    const decks = [...new Set(cvCards.map(c => c.deck))];
-    for (const d of decks) {
-      try { await invoke(url, "createDeck", { deck: d }); } catch (e) { /* already exists is fine */ }
-    }
+    const decksToCreate = [...new Set(cvCards.map(c => c.deck))];
 
-    // 2) Pull every CrashVault-managed Anki note (tagged "crashvault") in one shot.
+    // Pull all CV-managed notes from Anki in one query
     const noteIds = await invoke(url, "findNotes", { query: "tag:crashvault" });
     const notes = noteIds.length
       ? await invoke(url, "notesInfo", { notes: noteIds })
       : [];
 
-    // Build cvid → anki note index
+    // Index by cvid + fetch deck-per-note (needed for move detection)
     const ankiByCvid = new Map();
     for (const note of notes) {
       const tag = (note.tags || []).find(t => t.startsWith("cvid:"));
@@ -138,23 +124,40 @@
       });
     }
 
-    let added = 0, updated = 0, pulled = 0, deleted = 0, moved = 0;
+    // Deck info for all those cards — one batch call
+    const ankiCardIds = notes.length
+      ? await invoke(url, "findCards", { query: "tag:crashvault" })
+      : [];
+    let cardInfos = [];
+    if (ankiCardIds.length) {
+      cardInfos = await invoke(url, "cardsInfo", { cards: ankiCardIds });
+    }
+    const deckByNoteId = new Map();
+    for (const ci of cardInfos) {
+      if (!deckByNoteId.has(ci.note)) deckByNoteId.set(ci.note, ci.deckName);
+    }
+
+    const plan = {
+      url, deckRoot,
+      decksToCreate,
+      added: [],
+      updated: [],   // each: { direction: "push" | "pull", cvid, ... }
+      deleted: [],
+      moves: []      // applied silently — not user-confirmable
+    };
+
     const cvCvids = new Set(cvCards.map(c => c.cvid));
 
     for (const card of cvCards) {
       const an = ankiByCvid.get(card.cvid);
       if (!an) {
-        // CV has it, Anki doesn't → add to Anki
-        await invoke(url, "addNote", {
-          note: {
-            deckName: card.deck,
-            modelName: "Basic",
-            fields: { Front: card.front, Back: card.back },
-            tags: ["crashvault", "cvid:" + card.cvid],
-            options: { allowDuplicate: true }  // we manage identity via tag, not field-hash
-          }
+        plan.added.push({
+          cvid: card.cvid,
+          deck: card.deck,
+          front: card.front,
+          back: card.back,
+          tileType: card.tileType
         });
-        added++;
         continue;
       }
 
@@ -162,53 +165,118 @@
       const anContent = an.front + "\x1f" + an.back;
       const sameContent = cvContent === anContent;
 
-      // Move the underlying card to the right deck whenever it drifted
-      // (e.g. user renamed the topic → deck name changed → cards must follow).
-      // Cheap and idempotent; skip if no notes are syncing at all.
-      try {
-        const ankiCardIds = await invoke(url, "findCards", { query: `nid:${an.ankiId}` });
-        if (ankiCardIds.length) {
-          const info = await invoke(url, "cardsInfo", { cards: ankiCardIds });
-          const wrongDeck = info.some(c => c.deckName !== card.deck);
-          if (wrongDeck) {
-            await invoke(url, "changeDeck", { cards: ankiCardIds, deck: card.deck });
-            moved++;
-          }
-        }
-      } catch (e) { /* non-fatal */ }
+      // Move detection — deck drift (silent)
+      const currentDeck = deckByNoteId.get(an.ankiId);
+      if (currentDeck && currentDeck !== card.deck) {
+        plan.moves.push({ cvid: card.cvid, ankiId: an.ankiId, fromDeck: currentDeck, toDeck: card.deck });
+      }
 
       if (sameContent) continue;
 
-      // Diff exists → last-write-wins
+      // Last-write-wins
       const cvNewer = (card.mod || 0) >= (an.mod || 0) * 1000;
       if (cvNewer) {
+        plan.updated.push({
+          direction: "push",
+          cvid: card.cvid,
+          ankiId: an.ankiId,
+          deck: card.deck,
+          front: card.front,
+          back: card.back,
+          oldFront: an.front,
+          tileType: card.tileType
+        });
+      } else {
+        plan.updated.push({
+          direction: "pull",
+          cvid: card.cvid,
+          ankiId: an.ankiId,
+          front: an.front,
+          back: an.back,
+          oldFront: card.front,
+          tileType: card.tileType,
+          writeBack: card.writeBack
+        });
+      }
+    }
+
+    // Deletes — anki has cvid that CV doesn't
+    for (const [cvid, an] of ankiByCvid) {
+      if (!cvCvids.has(cvid)) {
+        plan.deleted.push({ cvid, ankiId: an.ankiId, front: an.front });
+      }
+    }
+
+    return plan;
+  }
+
+  // ============================================================
+  // applyPlan — execute the (possibly user-filtered) plan
+  // ============================================================
+  async function applyPlan(plan, ctx) {
+    const url = plan.url;
+
+    // Decks (idempotent)
+    for (const d of (plan.decksToCreate || [])) {
+      try { await invoke(url, "createDeck", { deck: d }); } catch (e) { /* exists */ }
+    }
+
+    let added = 0, updated = 0, pulled = 0, deleted = 0, moved = 0;
+
+    for (const item of (plan.added || [])) {
+      await invoke(url, "addNote", {
+        note: {
+          deckName: item.deck,
+          modelName: "Basic",
+          fields: { Front: item.front, Back: item.back },
+          tags: ["crashvault", "cvid:" + item.cvid],
+          options: { allowDuplicate: true }
+        }
+      });
+      added++;
+    }
+
+    for (const item of (plan.updated || [])) {
+      if (item.direction === "push") {
         await invoke(url, "updateNoteFields", {
-          note: { id: an.ankiId, fields: { Front: card.front, Back: card.back } }
+          note: { id: item.ankiId, fields: { Front: item.front, Back: item.back } }
         });
         updated++;
       } else {
         // Pull Anki → CV
-        card.writeBack(an.front, an.back);
+        item.writeBack(item.front, item.back);
         pulled++;
-        ctx.markDirty();
+        if (ctx && ctx.markDirty) ctx.markDirty();
       }
     }
 
-    // 3) Cards that existed in Anki (carrying our cvid:) but are gone in CV → delete
-    const toDelete = [];
-    for (const [cvid, an] of ankiByCvid) {
-      if (!cvCvids.has(cvid)) toDelete.push(an.ankiId);
+    if ((plan.deleted || []).length) {
+      await invoke(url, "deleteNotes", { notes: plan.deleted.map(d => d.ankiId) });
+      deleted = plan.deleted.length;
     }
-    if (toDelete.length) {
-      await invoke(url, "deleteNotes", { notes: toDelete });
-      deleted = toDelete.length;
+
+    // Moves: collect all ankiIds we want re-decked, then changeDeck per (deck, [cardIds])
+    for (const mv of (plan.moves || [])) {
+      try {
+        const cardIds = await invoke(url, "findCards", { query: `nid:${mv.ankiId}` });
+        if (cardIds.length) {
+          await invoke(url, "changeDeck", { cards: cardIds, deck: mv.toDeck });
+          moved++;
+        }
+      } catch (e) { /* non-fatal */ }
     }
 
     return { added, updated, pulled, deleted, moved };
   }
 
+  // Backwards-compat one-shot path (push+pull everything, no dialog).
+  async function syncModule(moduleState, config, ctx) {
+    const plan = await computePlan(moduleState, config);
+    return applyPlan(plan, ctx);
+  }
+
   // ============================================================
-  // Test connection (used by the config dialog)
+  // Test connection
   // ============================================================
   async function test(config) {
     try {
@@ -220,24 +288,27 @@
   }
 
   // ============================================================
-  // Config dialog UI
+  // Config dialog
   // ============================================================
+  const DEFAULT_URL = "http://127.0.0.1:8765";
+
   function renderConfig(container, config, save) {
     const origin = window.location.origin;
     container.innerHTML = `
       <h3>AnkiConnect konfigurieren</h3>
-      <p class="dlg-sub">Direkter Sync zu deinem lokalen Anki. Funktioniert nur wenn Anki Desktop läuft.</p>
 
       <div class="fcfg-field">
         <label>AnkiConnect URL</label>
-        <input type="text" data-field="url" value="${escapeAttr(config.url || "http://127.0.0.1:8765")}">
-        <div class="hint">Default ist gut. Nur ändern, wenn du AnkiConnect auf einem anderen Port betreibst.</div>
+        <div style="display:flex;gap:8px;">
+          <input type="text" data-field="url" value="${escapeAttr(config.url || DEFAULT_URL)}" style="flex:1">
+          <button class="small" data-act="default-url">Standard</button>
+        </div>
       </div>
 
       <div class="fcfg-field">
         <label>Deck-Wurzel</label>
         <input type="text" data-field="deckRoot" value="${escapeAttr(config.deckRoot || "CrashVault")}">
-        <div class="hint">Alle Decks landen unter dieser Wurzel: <code>${escapeText(config.deckRoot || "CrashVault")}::&lt;Modul&gt;::&lt;Tile&gt;::&lt;Thema&gt;</code></div>
+        <div class="hint">Alle Decks landen unter dieser Wurzel: <code><span data-deckroot-preview>${escapeText(config.deckRoot || "CrashVault")}</span>::&lt;Modul&gt;::&lt;Tile&gt;::&lt;Thema&gt;</code></div>
       </div>
 
       <div class="fcfg-field" style="flex-direction:row;align-items:center;gap:10px;">
@@ -245,19 +316,22 @@
           <input type="checkbox" data-field="autoSyncOnSave" ${config.autoSyncOnSave ? "checked" : ""}>
           <span class="slider"></span>
         </label>
-        <span style="font-size:13px">Nach jedem Speichern automatisch syncen</span>
+        <span style="font-size:13px">Automatisch syncen</span>
+      </div>
+
+      <div class="fcfg-field" data-confirm-row style="flex-direction:row;align-items:center;gap:10px;${config.autoSyncOnSave ? "display:none;" : ""}">
+        <label class="switch">
+          <input type="checkbox" data-field="requireConfirm" ${config.requireConfirm ? "checked" : ""}>
+          <span class="slider"></span>
+        </label>
+        <span style="font-size:13px">Änderungen manuell bestätigen</span>
       </div>
 
       <div class="fcfg-field">
-        <label>CORS — diese Origin in AnkiConnect zulassen</label>
+        <label>CORS Config</label>
         <div class="copy-row">
-          <code data-cv-origin>${escapeText(origin)}</code>
+          <code>${escapeText(origin)}</code>
           <button class="small" data-act="copy-origin">Kopieren</button>
-        </div>
-        <div class="hint">
-          In Anki: <b>Tools → Add-ons → AnkiConnect → Config</b>. Trage diese Origin in <code>webCorsOriginList</code> ein:
-          <br><code>"webCorsOriginList": ["http://localhost", "${escapeText(origin)}"]</code>
-          <br>Anki neu starten danach.
         </div>
       </div>
 
@@ -272,11 +346,29 @@
     `;
 
     const get = () => ({
-      url: container.querySelector("[data-field='url']").value.trim() || "http://127.0.0.1:8765",
+      url: container.querySelector("[data-field='url']").value.trim() || DEFAULT_URL,
       deckRoot: container.querySelector("[data-field='deckRoot']").value.trim() || "CrashVault",
-      autoSyncOnSave: container.querySelector("[data-field='autoSyncOnSave']").checked
+      autoSyncOnSave: container.querySelector("[data-field='autoSyncOnSave']").checked,
+      requireConfirm: container.querySelector("[data-field='requireConfirm']").checked
     });
 
+    // Reveal/hide the "manuell bestätigen" row in lockstep with the auto toggle.
+    const autoToggle = container.querySelector("[data-field='autoSyncOnSave']");
+    const confirmRow = container.querySelector("[data-confirm-row]");
+    autoToggle.addEventListener("change", () => {
+      confirmRow.style.display = autoToggle.checked ? "none" : "";
+    });
+
+    // Live deck-root preview
+    const deckInput = container.querySelector("[data-field='deckRoot']");
+    const deckPreview = container.querySelector("[data-deckroot-preview]");
+    deckInput.addEventListener("input", () => {
+      deckPreview.textContent = deckInput.value.trim() || "CrashVault";
+    });
+
+    container.querySelector("[data-act='default-url']").addEventListener("click", () => {
+      container.querySelector("[data-field='url']").value = DEFAULT_URL;
+    });
     container.querySelector("[data-act='copy-origin']").addEventListener("click", () => {
       navigator.clipboard.writeText(origin).then(
         () => toast("Origin kopiert ✓", "ok"),
@@ -302,12 +394,16 @@
     icon: "🔌",
     description: "Bidirektionale Karten-Synchronisation mit deinem lokalen Anki. Last-Write-Wins.",
     defaultConfig: {
-      url: "http://127.0.0.1:8765",
+      url: DEFAULT_URL,
       deckRoot: "CrashVault",
-      autoSyncOnSave: true
+      autoSyncOnSave: true,
+      requireConfirm: false
     },
     renderConfig,
     test,
-    syncModule
+    // Public surface for the module page
+    computePlan,
+    applyPlan,
+    syncModule  // legacy one-shot
   };
 })();

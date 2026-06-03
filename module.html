@@ -29,6 +29,22 @@
 
 <button class="add-tile-fab" id="btnAddTile" title="Kachel hinzufügen">+</button>
 
+<!-- Anki sync confirmation dialog (when requireConfirm is enabled) -->
+<dialog id="ankiChangesDlg">
+  <div class="ch-head">
+    <h3>Anki-Sync bestätigen</h3>
+    <div class="sub">Wähle aus, welche Änderungen jetzt synchronisiert werden sollen.</div>
+  </div>
+  <div class="ch-body" id="ankiChangesBody"></div>
+  <div class="ch-foot">
+    <span class="count" id="ankiChangesCount"></span>
+    <div class="actions">
+      <button id="ankiChangesCancel">Abbrechen</button>
+      <button class="primary" id="ankiChangesConfirm">Synchronisieren</button>
+    </div>
+  </div>
+</dialog>
+
 <!-- Anki dialog (shared across topic-list tiles) -->
 <dialog id="ankiDlg">
   <div class="anki-head">
@@ -84,6 +100,7 @@ function updateSaveButton() {
 function markDirty() {
   dirty = true; updateSaveButton();
   try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ state, ts: Date.now() })); } catch (e) {}
+  scheduleAnkiSync();
 }
 
 // ============================================================
@@ -160,7 +177,6 @@ async function save() {
     renderAll();
     toast(fileShas.length ? `Gespeichert ✓  (+ ${fileShas.length} Datei(en))` : "Gespeichert ✓", "ok");
     setStatus("ok", "Live");
-    maybeAutoSyncToAnki();
   } catch (e) {
     dirty = true; updateSaveButton();
     if (e.status === 409) { toast(e.message, "err"); setStatus("err", "Konflikt"); }
@@ -522,30 +538,80 @@ window.addEventListener("keydown", e => {
 // ============================================================
 // AnkiConnect integration (per-device feature)
 // ------------------------------------------------------------
-// The button is shown when the AnkiConnect feature is enabled in dashboard
-// settings. Clicking syncs the current module. After a successful save we
-// auto-trigger the sync if autoSyncOnSave is on. A pull (Anki→CV) sets dirty
-// again so the user can review and save the merged result.
+// Triggers:
+//   - markDirty()         → debounced auto-sync (700ms), only if autoSyncOnSave
+//   - manual button click → immediate sync now
+// Modes:
+//   - autoSyncOnSave + !requireConfirm  → push silently in the background
+//   - !autoSyncOnSave + !requireConfirm → only manual button, no dialog
+//   - !autoSyncOnSave + requireConfirm  → manual button opens diff dialog
+//   - autoSyncOnSave + requireConfirm   → ignored: auto syncs silently
+//                                          (confirm only makes sense for manual)
+// Concurrency:
+//   - one sync at a time (ankiSyncRunning)
+//   - if a new edit lands during sync, we re-arm the debouncer after the run
+//   - pulls flip markDirty which would re-trigger sync → suppressed via flag
 // ============================================================
+const ANKI_DEBOUNCE_MS = 700;
+let ankiSyncTimer = null;
 let ankiSyncRunning = false;
-function refreshAnkiButton() {
+let ankiSyncReRunNeeded = false;
+let suppressNextScheduleFromPull = false;
+
+function ankiFeatureState() {
   const feat = window.CV_FEATURES && window.CV_FEATURES["anki-connect"];
-  const st = feat ? getFeatureState("anki-connect") : null;
-  $("#btnAnkiSync").style.display = (feat && st && st.enabled) ? "" : "none";
+  if (!feat) return null;
+  const st = getFeatureState("anki-connect");
+  return st.enabled ? { feat, st } : null;
 }
 
-async function syncToAnki(opts) {
-  const feat = window.CV_FEATURES && window.CV_FEATURES["anki-connect"];
-  if (!feat) return;
-  const st = getFeatureState("anki-connect");
-  if (!st.enabled) return;
-  if (ankiSyncRunning) return;
+function refreshAnkiButton() {
+  $("#btnAnkiSync").style.display = ankiFeatureState() ? "" : "none";
+}
+
+function scheduleAnkiSync() {
+  if (suppressNextScheduleFromPull) return; // pull→markDirty must not echo
+  const ctx = ankiFeatureState();
+  if (!ctx) return;
+  if (!ctx.st.config.autoSyncOnSave) return; // manual-only mode
+  clearTimeout(ankiSyncTimer);
+  ankiSyncTimer = setTimeout(() => runAnkiSync({ silent: true }), ANKI_DEBOUNCE_MS);
+}
+
+async function runAnkiSync(opts) {
+  opts = opts || {};
+  const ctx = ankiFeatureState();
+  if (!ctx) return;
+  if (ankiSyncRunning) { ankiSyncReRunNeeded = true; return; }
   ankiSyncRunning = true;
+  ankiSyncReRunNeeded = false;
   const btn = $("#btnAnkiSync");
   const orig = btn.textContent;
   btn.disabled = true; btn.textContent = "🔌 Sync…";
   try {
-    const result = await feat.syncModule(state, st.config, { markDirty });
+    let plan = await ctx.feat.computePlan(state, ctx.st.config);
+    const totalChanges = plan.added.length + plan.updated.length + plan.deleted.length;
+    const movesOnly = !totalChanges && plan.moves.length;
+
+    // Confirmation gate — only when explicit manual mode (opts.manual) AND user wants it
+    if (opts.manual && ctx.st.config.requireConfirm && totalChanges) {
+      const filtered = await openChangesDialog(plan);
+      if (!filtered) { setStatus("ok", "Live"); return; } // cancelled
+      plan = filtered;
+    }
+
+    if (!totalChanges && !movesOnly) {
+      if (!opts.silent) toast("Anki: alles aktuell ✓", "ok");
+      return;
+    }
+
+    const wrappedCtx = {
+      markDirty: () => {
+        suppressNextScheduleFromPull = true;
+        try { markDirty(); } finally { suppressNextScheduleFromPull = false; }
+      }
+    };
+    const result = await ctx.feat.applyPlan(plan, wrappedCtx);
     const parts = [];
     if (result.added)   parts.push(`+${result.added}`);
     if (result.updated) parts.push(`↑${result.updated}`);
@@ -553,24 +619,150 @@ async function syncToAnki(opts) {
     if (result.moved)   parts.push(`⇄${result.moved}`);
     if (result.deleted) parts.push(`✕${result.deleted}`);
     const summary = parts.length ? parts.join(" · ") : "alles aktuell";
-    toast(`Anki: ${summary} ✓`, "ok");
+    if (result.pulled) renderAll(); // CV state changed — refresh tiles
+    if (!opts.silent || result.pulled) toast(`Anki: ${summary} ✓`, "ok");
   } catch (e) {
-    if (!opts || !opts.silent) toast("Anki-Sync fehlgeschlagen: " + e.message, "err");
+    if (!opts.silent) toast("Anki-Sync fehlgeschlagen: " + e.message, "err");
+    else console.warn("Anki-Sync still:", e);
   } finally {
     ankiSyncRunning = false;
     btn.disabled = false; btn.textContent = orig;
+    if (ankiSyncReRunNeeded) scheduleAnkiSync();
   }
 }
 
-function maybeAutoSyncToAnki() {
-  const st = getFeatureState("anki-connect");
-  if (st.enabled && st.config.autoSyncOnSave) {
-    // Fire-and-forget; errors surface via toast but don't break the save flow.
-    syncToAnki({ silent: false });
-  }
+// ============================================================
+// Changes confirmation dialog with tri-state category checkboxes
+// ------------------------------------------------------------
+// Returns a Promise resolving to either the user-filtered plan or null
+// if cancelled. Categories: Neue (added), Geänderte (updated, with direction
+// badge for push vs pull), Entfernte (deleted). The category-header checkbox
+// is a tri-state: indeterminate when partial, click toggles all-on/all-off.
+// ============================================================
+function openChangesDialog(plan) {
+  return new Promise(resolve => {
+    const dlg = $("#ankiChangesDlg");
+    const body = $("#ankiChangesBody");
+    body.innerHTML = "";
+
+    // Selection state — Sets of indices per category, init = all selected
+    const sel = { added: new Set(), updated: new Set(), deleted: new Set() };
+    plan.added  .forEach((_, i) => sel.added.add(i));
+    plan.updated.forEach((_, i) => sel.updated.add(i));
+    plan.deleted.forEach((_, i) => sel.deleted.add(i));
+
+    const sections = [
+      { key: "added",   label: "Neue",     renderItem: addedItem    },
+      { key: "updated", label: "Geänderte", renderItem: updatedItem  },
+      { key: "deleted", label: "Entfernte", renderItem: deletedItem  }
+    ];
+
+    function previewFront(s) { return (s || "").replace(/\s+/g, " ").trim().slice(0, 90) || "(leer)"; }
+    function lastSegment(deck) { return (deck || "").split("::").pop() || ""; }
+
+    function addedItem(item, idx) {
+      return `<input type="checkbox" data-idx="${idx}" checked>
+              <span class="ch-text">${escapeText(previewFront(item.front))}</span>
+              <span class="ch-deck" title="${escapeAttr(item.deck)}">${escapeText(lastSegment(item.deck))}</span>`;
+    }
+    function updatedItem(item, idx) {
+      const dirClass = item.direction === "push" ? "push" : "pull";
+      const dirIcon  = item.direction === "push" ? "→ Anki" : "← Anki";
+      return `<input type="checkbox" data-idx="${idx}" checked>
+              <span class="ch-text">${escapeText(previewFront(item.direction === "push" ? item.front : item.front))}</span>
+              <span class="ch-dir ${dirClass}">${dirIcon}</span>`;
+    }
+    function deletedItem(item, idx) {
+      return `<input type="checkbox" data-idx="${idx}" checked>
+              <span class="ch-text">${escapeText(previewFront(item.front))}</span>`;
+    }
+
+    sections.forEach(sec => {
+      const items = plan[sec.key];
+      const section = document.createElement("div");
+      section.className = "changes-section";
+      section.innerHTML = `
+        <div class="changes-header">
+          <input type="checkbox" data-cat="${sec.key}" ${items.length ? "checked" : ""} ${items.length ? "" : "disabled"}>
+          <span class="label">${sec.label}</span>
+          <span class="count">${items.length}</span>
+        </div>
+        <div class="changes-list" data-list></div>
+      `;
+      const list = section.querySelector("[data-list]");
+      if (!items.length) {
+        list.innerHTML = `<div class="changes-empty">Keine.</div>`;
+      } else {
+        items.forEach((item, idx) => {
+          const row = document.createElement("label");
+          row.className = "changes-item";
+          row.innerHTML = sec.renderItem(item, idx);
+          const ip = row.querySelector("input");
+          ip.addEventListener("change", () => {
+            if (ip.checked) sel[sec.key].add(idx);
+            else             sel[sec.key].delete(idx);
+            updateCategoryState();
+            updateFooter();
+          });
+          list.appendChild(row);
+        });
+      }
+      body.appendChild(section);
+
+      const catBox = section.querySelector(`[data-cat='${sec.key}']`);
+      catBox.addEventListener("click", () => {
+        // Click cycles: any-checked → all-off; all-off → all-on
+        const anyChecked = sel[sec.key].size > 0;
+        const newState = !anyChecked;
+        sel[sec.key].clear();
+        const itemBoxes = list.querySelectorAll("input[type=checkbox]");
+        itemBoxes.forEach((ib, i) => {
+          ib.checked = newState;
+          if (newState) sel[sec.key].add(i);
+        });
+        // Without an explicit click handler we'd inherit the browser's
+        // checkbox toggle (which can desync); force the visible state now.
+        catBox.checked = newState;
+        catBox.indeterminate = false;
+        updateFooter();
+      });
+    });
+
+    function updateCategoryState() {
+      sections.forEach(sec => {
+        const total = plan[sec.key].length;
+        const checked = sel[sec.key].size;
+        const catBox = body.querySelector(`[data-cat='${sec.key}']`);
+        if (!catBox || !total) return;
+        catBox.checked = checked === total;
+        catBox.indeterminate = checked > 0 && checked < total;
+      });
+    }
+    function updateFooter() {
+      const tot = sel.added.size + sel.updated.size + sel.deleted.size;
+      $("#ankiChangesCount").textContent = `${tot} ausgewählt`;
+      $("#ankiChangesConfirm").disabled = tot === 0;
+    }
+    updateCategoryState();
+    updateFooter();
+
+    // Wire dialog buttons once per open
+    $("#ankiChangesConfirm").onclick = () => {
+      dlg.close();
+      resolve({
+        ...plan,
+        added:   plan.added  .filter((_, i) => sel.added  .has(i)),
+        updated: plan.updated.filter((_, i) => sel.updated.has(i)),
+        deleted: plan.deleted.filter((_, i) => sel.deleted.has(i))
+      });
+    };
+    $("#ankiChangesCancel").onclick = () => { dlg.close(); resolve(null); };
+
+    dlg.showModal();
+  });
 }
 
-$("#btnAnkiSync").addEventListener("click", () => syncToAnki());
+$("#btnAnkiSync").addEventListener("click", () => runAnkiSync({ manual: true }));
 window.addEventListener("focus", refreshAnkiButton);
 
 (async function init() {
