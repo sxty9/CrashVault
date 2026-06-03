@@ -629,8 +629,13 @@ async function runAnkiSync(opts) {
     const totalChanges = plan.added.length + plan.updated.length + plan.deleted.length;
     const movesOnly = !totalChanges && plan.moves.length;
 
-    // Confirmation gate — only when explicit manual mode (opts.manual) AND user wants it
-    if (opts.manual && ctx.st.config.requireConfirm && totalChanges) {
+    // Confirmation gate — only on manual triggers, only when auto-sync is
+    // OFF and the user has explicitly opted into per-change confirmation.
+    // Auto-sync ON forces the dialog off regardless of the persisted
+    // requireConfirm value (which is kept in storage so toggling auto-sync
+    // back off restores the user's previous preference).
+    const effectiveConfirm = !ctx.st.config.autoSyncOnSave && ctx.st.config.requireConfirm;
+    if (opts.manual && effectiveConfirm && totalChanges) {
       const filtered = await openChangesDialog(plan);
       if (!filtered) { setStatus("ok", "Live"); return; } // cancelled
       plan = filtered;
