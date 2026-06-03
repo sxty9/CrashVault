@@ -6,9 +6,15 @@ window.CRASHVAULT_REGISTRY = {
       "name": "BWL",
       "color": "#38bdf8",
       "createdAt": "2026-06-02T17:51:56.892Z"
+    },
+    {
+      "id": "unternehmensmodellierung",
+      "name": "Unternehmensmodellierung",
+      "color": "#a78bfa",
+      "createdAt": "2026-06-03T09:37:02.045Z"
     }
   ],
   "_meta": {
-    "lastSaved": "2026-06-02T18:47:37.932Z"
+    "lastSaved": "2026-06-03T09:37:03.243Z"
   }
 };
