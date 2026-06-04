@@ -88,6 +88,49 @@ let dirty = false;
 let pendingUploads = new Map();
 let repoFiles = [];
 
+// ============================================================
+// Per-device tile layout (positions + sizes + z-order)
+// ------------------------------------------------------------
+// Tile geometry is intentionally NOT committed to the shared repo —
+// otherwise rearranging tiles would push noise into the data file and
+// fight everyone else's layout preferences. We keep it in localStorage
+// keyed per module, and let any tile.x/y/w/h/z that still lives in the
+// data file act as a one-time fallback for first-time openers. Once a
+// user drags a tile, their local entry overrides the file value forever.
+// ============================================================
+const POSITIONS_KEY = `crashvault-positions-${moduleId}`;
+function getLocalPositions() {
+  try { return JSON.parse(localStorage.getItem(POSITIONS_KEY) || "{}"); }
+  catch (e) { return {}; }
+}
+function getLocalPosition(tileId) {
+  return getLocalPositions()[tileId] || null;
+}
+function setLocalPosition(tileId, partial) {
+  const all = getLocalPositions();
+  all[tileId] = Object.assign({}, all[tileId] || {}, partial);
+  try { localStorage.setItem(POSITIONS_KEY, JSON.stringify(all)); } catch (e) {}
+}
+function removeLocalPosition(tileId) {
+  const all = getLocalPositions();
+  if (!(tileId in all)) return;
+  delete all[tileId];
+  try { localStorage.setItem(POSITIONS_KEY, JSON.stringify(all)); } catch (e) {}
+}
+// Effective geometry for a tile: local first, file second, defaults third.
+function effectivePos(tile) {
+  const cls = window.CV_TILES[tile.type] || {};
+  const def = cls.defaultSize || { w: 600, h: 500 };
+  const p = getLocalPosition(tile.id) || {};
+  return {
+    x: p.x ?? tile.x ?? 20,
+    y: p.y ?? tile.y ?? 20,
+    w: p.w ?? tile.w ?? def.w,
+    h: p.h ?? tile.h ?? def.h,
+    z: p.z ?? tile.z ?? 1
+  };
+}
+
 function setStatus(kind, text) {
   const el = $("#statusPill"); el.className = "status-pill " + (kind || ""); el.textContent = text;
 }
@@ -167,6 +210,9 @@ async function save() {
       att.source = "repo";
     }
     label.textContent = "Commite…";
+    // tile.x/y/w/h/z stays in the committed state so first-time openers see
+    // the original "shared" layout. We never mutate those fields after a
+    // tile is created — repositioning goes exclusively into localStorage.
     const json = await apiPostJson(`/api/data?module=${encodeURIComponent(moduleId)}`, {
       state, expectedSha: baseSha, fileShas
     });
@@ -222,11 +268,12 @@ function buildTileEl(tile) {
   const el = document.createElement("div");
   el.className = "tile";
   el.dataset.id = tile.id;
-  el.style.left   = (tile.x || 20) + "px";
-  el.style.top    = (tile.y || 20) + "px";
-  el.style.width  = (tile.w || (cls?.defaultSize?.w || 600)) + "px";
-  el.style.height = (tile.h || (cls?.defaultSize?.h || 500)) + "px";
-  el.style.zIndex = tile.z || 1;
+  const pos = effectivePos(tile);
+  el.style.left   = pos.x + "px";
+  el.style.top    = pos.y + "px";
+  el.style.width  = pos.w + "px";
+  el.style.height = pos.h + "px";
+  el.style.zIndex = pos.z;
 
   el.innerHTML = `
     <div class="tile-header" data-drag>
@@ -254,6 +301,7 @@ function buildTileEl(tile) {
       }
     }
     state.tiles = state.tiles.filter(x => x.id !== tile.id);
+    removeLocalPosition(tile.id);
     markDirty(); renderAll();
   });
   el.querySelector("[data-act='front']").addEventListener("click", () => bringToFront(tile, el));
@@ -273,11 +321,14 @@ function buildTileEl(tile) {
 }
 
 function bringToFront(tile, el) {
-  const maxZ = Math.max(...state.tiles.map(t => t.z || 1), 1);
-  if (tile.z !== maxZ + 1) {
-    tile.z = maxZ + 1;
-    el.style.zIndex = tile.z;
-    markDirty();
+  // z-order is also per-device — compute the new max from the effective pos
+  // of every tile (mixing local and file values), then store our new z
+  // locally only.
+  const maxZ = Math.max(...state.tiles.map(t => effectivePos(t).z), 1);
+  const curZ = effectivePos(tile).z;
+  if (curZ !== maxZ + 1) {
+    setLocalPosition(tile.id, { z: maxZ + 1 });
+    el.style.zIndex = maxZ + 1;
   }
 }
 
@@ -301,9 +352,11 @@ function wireDrag(el, tile) {
       document.removeEventListener("mousemove", move);
       document.removeEventListener("mouseup", up);
       el.classList.remove("dragging");
-      tile.x = parseFloat(el.style.left);
-      tile.y = parseFloat(el.style.top);
-      markDirty();
+      // Persist locally only; layout never enters the dirty-flag pipeline.
+      setLocalPosition(tile.id, {
+        x: parseFloat(el.style.left),
+        y: parseFloat(el.style.top)
+      });
     }
     document.addEventListener("mousemove", move);
     document.addEventListener("mouseup", up);
@@ -326,9 +379,7 @@ function wireResize(el, tile) {
     function up() {
       document.removeEventListener("mousemove", move);
       document.removeEventListener("mouseup", up);
-      tile.w = el.offsetWidth;
-      tile.h = el.offsetHeight;
-      markDirty();
+      setLocalPosition(tile.id, { w: el.offsetWidth, h: el.offsetHeight });
     }
     document.addEventListener("mousemove", move);
     document.addEventListener("mouseup", up);
@@ -339,21 +390,20 @@ function wireResize(el, tile) {
 // Add-tile FAB + popup
 // ============================================================
 function findFreePosition(defaultSize) {
-  // Place new tile at the top-right of the visible scroll area, then nudge
+  // Place new tile at the top-left of the visible scroll area, then nudge
   // diagonally if it would overlap an existing tile.
   const wrap = $("#canvasWrap");
   let x = wrap.scrollLeft + 40;
   let y = wrap.scrollTop  + 40;
   const w = defaultSize.w, h = defaultSize.h;
   let attempts = 0;
-  while (attempts < 30 && state.tiles.some(t => overlaps(t, x, y, w, h))) {
+  while (attempts < 30 && state.tiles.some(t => overlapsPos(effectivePos(t), x, y, w, h))) {
     x += 40; y += 40; attempts++;
   }
   return { x, y };
 }
-function overlaps(t, x, y, w, h) {
-  const tw = t.w || 600, th = t.h || 500, tx = t.x || 20, ty = t.y || 20;
-  return !(x + w < tx || x > tx + tw || y + h < ty || y > ty + th);
+function overlapsPos(p, x, y, w, h) {
+  return !(x + w < p.x || x > p.x + p.w || y + h < p.y || y > p.y + p.h);
 }
 
 $("#btnAddTile").addEventListener("click", e => {
@@ -368,21 +418,27 @@ $("#btnAddTile").addEventListener("click", e => {
     b.addEventListener("click", () => {
       popup.remove();
       const pos = findFreePosition(cls.defaultSize || { w: 600, h: 500 });
+      const w = cls.defaultSize?.w || 600;
+      const h = cls.defaultSize?.h || 500;
+      const maxZ = Math.max(...state.tiles.map(t => effectivePos(t).z), 0);
+      // Initial geometry is written to the tile object so other users opening
+      // this module later see the layout we chose. Subsequent drag/resize
+      // calls only touch localStorage; the tile's x/y/w/h/z fields are never
+      // mutated again.
       const tile = {
         id: uid(),
         type,
         title: cls.label,
         x: pos.x, y: pos.y,
-        w: cls.defaultSize?.w || 600,
-        h: cls.defaultSize?.h || 500,
-        z: (Math.max(...state.tiles.map(t => t.z || 1), 0) + 1),
+        w, h,
+        z: maxZ + 1,
         state: cls.defaultState ? cls.defaultState() : {}
       };
       state.tiles.push(tile);
       markDirty(); renderAll();
       // Scroll the new tile into view if it's off-screen
       const wrap = $("#canvasWrap");
-      wrap.scrollTo({ left: Math.max(0, tile.x - 40), top: Math.max(0, tile.y - 40), behavior: "smooth" });
+      wrap.scrollTo({ left: Math.max(0, pos.x - 40), top: Math.max(0, pos.y - 40), behavior: "smooth" });
     });
     popup.appendChild(b);
   }
