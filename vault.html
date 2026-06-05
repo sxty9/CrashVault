@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrashVault — Vault</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+
+<header>
+  <div class="crumbs">
+    <a href="/">⚡ CrashVault</a>
+    <span class="sep">›</span>
+    <span class="here" id="vaultName">…</span>
+  </div>
+  <div class="toolbar">
+    <span class="status-pill" id="statusPill">…</span>
+    <button class="ghost small" id="btnVaultSettings" title="Vault-Einstellungen">⚙</button>
+    <button class="ghost small" id="btnReload" title="Neu laden">↻</button>
+    <button class="ghost small" id="btnDiscard" style="display:none">Verwerfen</button>
+    <button class="primary save-btn" id="btnSave"><span class="dot"></span><span id="saveLabel">Gespeichert</span></button>
+    <span class="user-indicator" id="userIndicator" style="display:none">
+      <div class="user-avatar" id="userAvatar" title="Konto"></div>
+      <div class="user-menu" id="userMenu">
+        <div class="uhead"><b id="umName">…</b><span id="umHandle">…</span></div>
+        <hr>
+        <button data-act="dashboard">Zum Dashboard</button>
+        <button data-act="logout">Abmelden</button>
+      </div>
+    </span>
+  </div>
+</header>
+
+<main class="dashboard">
+  <p class="intro" id="vaultIntro">Module in diesem Vault. Klick auf ein Modul, um Themen, Sprüche und Karteikarten zu pflegen.</p>
+  <div class="module-grid" id="moduleGrid"></div>
+  <div id="emptyState" style="display:none">
+    <div class="empty-state">
+      <h2>Noch kein Modul</h2>
+      <p>Lege dein erstes Klausurmodul in diesem Vault an.</p>
+      <button class="primary" id="btnAddFirst">+ Erstes Modul anlegen</button>
+    </div>
+  </div>
+</main>
+
+<dialog id="addModuleDlg">
+  <h3>Neues Modul</h3>
+  <div style="display:flex;flex-direction:column;gap:12px;min-width:340px;">
+    <div>
+      <label style="display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Name</label>
+      <input type="text" id="newModuleName" placeholder="z.B. Rechnernetze" style="width:100%;">
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">ID (URL-Slug)</label>
+      <input type="text" id="newModuleId" placeholder="z.B. rechnernetze" style="width:100%;">
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Nur Kleinbuchstaben, Zahlen, "-" und "_".</div>
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Farbe</label>
+      <div id="colorPicker" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+    </div>
+  </div>
+  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
+    <button id="cancelAddModule">Abbrechen</button>
+    <button class="primary" id="confirmAddModule">Anlegen</button>
+  </div>
+</dialog>
+
+<!-- Vault-Settings (Mitglieder + Invites + Danger-Zone) -->
+<dialog id="vaultSettingsDlg" style="width:600px;max-width:92vw">
+  <h3 id="vsTitle">Vault-Einstellungen</h3>
+  <p class="dlg-sub">Mitglieder, Invites und Vault-Optionen.</p>
+
+  <div class="settings-section">
+    <h4>Vault</h4>
+    <div class="auth-field"><label>Name</label><input type="text" id="vsName" style="width:100%"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
+      <button class="small primary" id="vsRename" disabled>Speichern</button>
+    </div>
+  </div>
+
+  <div class="settings-section">
+    <h4>Mitglieder</h4>
+    <div id="vsMembers"></div>
+    <div id="vsAddMemberRow" style="display:flex;gap:6px;margin-top:8px;">
+      <input type="text" id="vsAddUsername" placeholder="Username" style="flex:1">
+      <button class="small primary" id="vsAddMember">Hinzufügen</button>
+    </div>
+  </div>
+
+  <div class="settings-section" id="vsInvitesSection">
+    <h4>Invite-Links</h4>
+    <div id="vsInvites"></div>
+    <div style="display:flex;gap:6px;align-items:center;margin-top:8px;">
+      <input type="number" id="vsInviteDays" value="30" min="1" max="365" style="width:80px">
+      <span style="font-size:12px;color:var(--muted)">Tage gültig</span>
+      <input type="number" id="vsInviteUses" value="1" min="1" max="100" style="width:80px">
+      <span style="font-size:12px;color:var(--muted)">max. Nutzungen</span>
+      <button class="small primary" id="vsCreateInvite" style="margin-left:auto">Neuer Code</button>
+    </div>
+  </div>
+
+  <div class="settings-section" id="vsDangerSection">
+    <h4 style="color:var(--danger)">Danger Zone</h4>
+    <button class="danger" id="vsDelete">Vault löschen</button>
+  </div>
+
+  <div style="display:flex;justify-content:flex-end;margin-top:18px;">
+    <button id="vsClose">Schließen</button>
+  </div>
+</dialog>
+
+<script src="/assets/util.js"></script>
+<script>
+"use strict";
+
+const { $, uid, escapeText, escapeAttr, slugify, toast, loading, api, apiPostJson, getSession, clearSession } = window.CV;
+
+const params = new URLSearchParams(location.search);
+const vaultId = params.get("id");
+if (!vaultId) { alert("Vault-ID fehlt."); location.href = "/"; }
+
+const LOCAL_CACHE_KEY = `crashvault-vault-${vaultId}`;
+const COLORS = ["#38bdf8", "#a78bfa", "#4ade80", "#fbbf24", "#f87171", "#f472b6", "#22d3ee", "#fb923c"];
+
+let currentUser = null;
+let vault = null;       // index entry: { id, name, color, owner, members }
+let vaultConfig = null; // { name, description, invites }
+let members = [];       // resolved [{ id, username, displayName, isOwner }]
+let registry = { modules: [] };
+let baseSha = null;
+let dirty = false;
+
+function setStatus(kind, text) {
+  const el = $("#statusPill"); el.className = "status-pill " + (kind || ""); el.textContent = text;
+}
+function updateSaveButton() {
+  const btn = $("#btnSave"); const label = $("#saveLabel");
+  const dot = btn.querySelector(".dot"); const discard = $("#btnDiscard");
+  if (dirty) { btn.disabled = false; label.textContent = "Speichern"; dot.style.background = "#0f172a"; discard.style.display = ""; }
+  else      { btn.disabled = true;  label.textContent = "✓ Gespeichert"; dot.style.background = "transparent"; discard.style.display = "none"; }
+}
+function markDirty() {
+  dirty = true; updateSaveButton();
+  try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ registry, ts: Date.now() })); } catch (e) {}
+}
+
+// ============================================================
+// Load vault meta + registry
+// ============================================================
+async function loadVault() {
+  const json = await (await api(`/api/vault?id=${encodeURIComponent(vaultId)}`)).json();
+  vault = json.vault;
+  vaultConfig = json.config || { invites: [] };
+  members = json.members || [];
+  document.title = `CrashVault — ${vault.name}`;
+  $("#vaultName").textContent = vault.name;
+}
+async function loadRegistry() {
+  const r = await api(`/api/registry?vault=${encodeURIComponent(vaultId)}`);
+  const json = await r.json();
+  registry = json.registry || { modules: [] };
+  if (!Array.isArray(registry.modules)) registry.modules = [];
+  baseSha = json.sha || null;
+  try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ registry, ts: Date.now() })); } catch (e) {}
+}
+
+async function save() {
+  if (!dirty) return;
+  const btn = $("#btnSave"); const label = $("#saveLabel");
+  btn.disabled = true; label.textContent = "Speichere…";
+  try {
+    const json = await apiPostJson(`/api/registry?vault=${encodeURIComponent(vaultId)}`, { registry, expectedSha: baseSha });
+    baseSha = json.sha;
+    dirty = false; updateSaveButton();
+    setStatus("ok", "Live"); toast("Gespeichert ✓", "ok");
+  } catch (e) {
+    dirty = true; updateSaveButton();
+    if (e.status === 409) { toast(e.message, "err"); setStatus("err", "Konflikt"); }
+    else                  { toast("Speichern fehlgeschlagen: " + e.message, "err"); setStatus("err", "Offline?"); }
+  }
+}
+
+// ============================================================
+// Module-Grid
+// ============================================================
+function render() {
+  const grid = $("#moduleGrid");
+  const empty = $("#emptyState");
+  grid.innerHTML = "";
+  if (!registry.modules.length) {
+    grid.style.display = "none"; empty.style.display = "block";
+    return;
+  }
+  grid.style.display = ""; empty.style.display = "none";
+
+  registry.modules.forEach((m, idx) => {
+    const card = document.createElement("div");
+    card.className = "module-card";
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="badge" style="background:${escapeAttr(m.color || "#38bdf8")}"></span>
+        <span class="name">${escapeText(m.name)}</span>
+      </div>
+      <div class="meta">${escapeText(m.id)}</div>
+      <div style="margin-top:auto;font-size:12px;color:var(--muted);">${m.description ? escapeText(m.description) : "Modul öffnen →"}</div>
+      <div class="actions">
+        <button class="small ghost" data-act="rename" title="Umbenennen">✎</button>
+        <button class="small danger" data-act="del" title="Modul löschen">✕</button>
+      </div>
+    `;
+    card.addEventListener("click", async e => {
+      if (e.target.closest("[data-act]")) return;
+      if (dirty) {
+        try { await save(); }
+        catch (err) { toast("Erst speichern: " + err.message, "err"); return; }
+        if (dirty) return;
+      }
+      window.location.href = `/module.html?vault=${encodeURIComponent(vaultId)}&id=${encodeURIComponent(m.id)}`;
+    });
+    card.querySelector("[data-act='rename']").addEventListener("click", e => {
+      e.stopPropagation();
+      const next = prompt("Neuer Name:", m.name);
+      if (next === null) return;
+      const t = next.trim(); if (!t) return;
+      m.name = t; markDirty(); render();
+    });
+    card.querySelector("[data-act='del']").addEventListener("click", e => {
+      e.stopPropagation();
+      if (!confirm(`Modul "${m.name}" wirklich aus diesem Vault entfernen?\n\nDas entfernt nur den Registry-Eintrag; vaults/${vaultId}/modules/${m.id}/ bleibt im Repo erhalten.`)) return;
+      registry.modules.splice(idx, 1);
+      markDirty(); render();
+    });
+    grid.appendChild(card);
+  });
+
+  const addCard = document.createElement("div");
+  addCard.className = "module-card add";
+  addCard.innerHTML = `<div class="plus">+</div><div class="lbl">Neues Modul</div>`;
+  addCard.addEventListener("click", openAddDialog);
+  grid.appendChild(addCard);
+}
+
+// ============================================================
+// Add-Module-Dialog
+// ============================================================
+let selectedColor = COLORS[0];
+function renderColorPicker() {
+  const p = $("#colorPicker"); p.innerHTML = "";
+  COLORS.forEach(c => {
+    const sw = document.createElement("button");
+    sw.style.cssText = `width:28px;height:28px;border-radius:6px;border:2px solid ${c === selectedColor ? "var(--text)" : "transparent"};background:${c};padding:0;cursor:pointer;`;
+    sw.addEventListener("click", () => { selectedColor = c; renderColorPicker(); });
+    p.appendChild(sw);
+  });
+}
+function openAddDialog() {
+  selectedColor = COLORS[registry.modules.length % COLORS.length];
+  $("#newModuleName").value = ""; $("#newModuleId").value = "";
+  $("#newModuleId").dataset.touched = "";
+  renderColorPicker();
+  $("#addModuleDlg").showModal();
+  setTimeout(() => $("#newModuleName").focus(), 0);
+}
+$("#newModuleName").addEventListener("input", e => {
+  const idEl = $("#newModuleId");
+  if (!idEl.dataset.touched) idEl.value = slugify(e.target.value);
+});
+$("#newModuleId").addEventListener("input", e => {
+  e.target.dataset.touched = "1";
+  e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+});
+$("#cancelAddModule").addEventListener("click", () => $("#addModuleDlg").close());
+$("#confirmAddModule").addEventListener("click", () => {
+  const name = $("#newModuleName").value.trim();
+  const id = $("#newModuleId").value.trim();
+  if (!name) { toast("Name fehlt", "warn"); return; }
+  if (!/^[a-z0-9][a-z0-9_-]{0,40}$/.test(id)) { toast("ID ungültig", "warn"); return; }
+  if (registry.modules.some(m => m.id === id)) { toast("ID bereits vergeben", "err"); return; }
+  registry.modules.push({ id, name, color: selectedColor, createdAt: new Date().toISOString() });
+  $("#addModuleDlg").close();
+  markDirty(); render();
+});
+$("#btnAddFirst").addEventListener("click", openAddDialog);
+
+// ============================================================
+// Vault-Settings dialog
+// ============================================================
+function isOwner() { return vault && currentUser && vault.owner === currentUser.id; }
+
+async function refreshVaultSettings() {
+  await loadVault();
+  $("#vsTitle").textContent = `${vault.name} — Einstellungen`;
+  $("#vsName").value = vault.name;
+  $("#vsRename").disabled = true;
+
+  // Members
+  const memEl = $("#vsMembers");
+  memEl.innerHTML = "";
+  members.forEach(m => {
+    const row = document.createElement("div");
+    row.className = "feature-row";
+    row.innerHTML = `
+      <div class="feat-icon">${m.isOwner ? "👑" : "🙂"}</div>
+      <div class="feat-text">
+        <div class="feat-name">${escapeText(m.displayName || m.username)}</div>
+        <div class="feat-desc">@${escapeText(m.username)}${m.isOwner ? " · Owner" : ""}</div>
+      </div>
+      <div class="feat-actions">
+        ${(!m.isOwner && isOwner()) ? `<button class="small danger" data-act="remove" data-uid="${escapeAttr(m.id)}">Entfernen</button>` : ""}
+        ${(!isOwner() && m.id === currentUser.id) ? `<button class="small danger" data-act="leave">Austreten</button>` : ""}
+      </div>
+    `;
+    memEl.appendChild(row);
+  });
+  $("#vsAddMemberRow").style.display = isOwner() ? "" : "none";
+
+  // Invites (owner only)
+  $("#vsInvitesSection").style.display = isOwner() ? "" : "none";
+  const invEl = $("#vsInvites");
+  invEl.innerHTML = "";
+  for (const inv of (vaultConfig.invites || [])) {
+    const url = `${location.origin}/?join=${encodeURIComponent(inv.code)}`;
+    const exp = new Date(inv.expiresAt).toLocaleDateString("de-DE");
+    const usesText = inv.maxUses ? `${inv.uses}/${inv.maxUses}` : `${inv.uses} (unbegrenzt)`;
+    const row = document.createElement("div");
+    row.className = "feature-row";
+    row.innerHTML = `
+      <div class="feat-icon">🔗</div>
+      <div class="feat-text">
+        <div class="feat-name" style="font-family:monospace">${escapeText(inv.code)}</div>
+        <div class="feat-desc">läuft ab ${exp} · ${usesText} verwendet</div>
+      </div>
+      <div class="feat-actions">
+        <button class="small" data-act="copy-invite" data-url="${escapeAttr(url)}">Kopieren</button>
+        <button class="small danger" data-act="revoke-invite" data-code="${escapeAttr(inv.code)}">Widerrufen</button>
+      </div>
+    `;
+    invEl.appendChild(row);
+  }
+
+  // Danger zone
+  $("#vsDangerSection").style.display = isOwner() ? "" : "none";
+}
+
+$("#vsName").addEventListener("input", () => {
+  $("#vsRename").disabled = $("#vsName").value.trim() === vault.name;
+});
+$("#vsRename").addEventListener("click", async () => {
+  const newName = $("#vsName").value.trim();
+  if (!newName) return;
+  try {
+    await apiPostJson(`/api/vault?id=${encodeURIComponent(vaultId)}`, { name: newName });
+    await refreshVaultSettings();
+    toast("Vault umbenannt ✓", "ok");
+  } catch (e) { toast("Umbenennen fehlgeschlagen: " + e.message, "err"); }
+});
+
+$("#vsAddMember").addEventListener("click", async () => {
+  const u = $("#vsAddUsername").value.trim().toLowerCase();
+  if (!u) return;
+  try {
+    await apiPostJson(`/api/vault-members?id=${encodeURIComponent(vaultId)}`, { username: u });
+    $("#vsAddUsername").value = "";
+    await refreshVaultSettings();
+    toast(`@${u} hinzugefügt ✓`, "ok");
+  } catch (e) { toast("Hinzufügen fehlgeschlagen: " + e.message, "err"); }
+});
+
+$("#vsMembers").addEventListener("click", async e => {
+  const btn = e.target.closest("button[data-act]"); if (!btn) return;
+  const act = btn.dataset.act;
+  if (act === "remove") {
+    if (!confirm("Mitglied wirklich entfernen?")) return;
+    try {
+      await api(`/api/vault-members?id=${encodeURIComponent(vaultId)}&user=${encodeURIComponent(btn.dataset.uid)}`, { method: "DELETE" });
+      await refreshVaultSettings();
+    } catch (err) { toast("Entfernen fehlgeschlagen: " + err.message, "err"); }
+  }
+  if (act === "leave") {
+    if (!confirm("Wirklich aus diesem Vault austreten?")) return;
+    try {
+      await api(`/api/vault-members?id=${encodeURIComponent(vaultId)}&user=me`, { method: "DELETE" });
+      window.location.href = "/";
+    } catch (err) { toast("Austreten fehlgeschlagen: " + err.message, "err"); }
+  }
+});
+
+$("#vsCreateInvite").addEventListener("click", async () => {
+  const days = parseInt($("#vsInviteDays").value, 10) || 30;
+  const uses = parseInt($("#vsInviteUses").value, 10) || 1;
+  try {
+    const res = await apiPostJson(`/api/vault-invite?id=${encodeURIComponent(vaultId)}`, { expiresInDays: days, maxUses: uses });
+    const url = `${location.origin}/?join=${encodeURIComponent(res.invite.code)}`;
+    try { await navigator.clipboard.writeText(url); toast("Invite-Link kopiert ✓", "ok"); }
+    catch (e) { toast("Code: " + res.invite.code, "ok"); }
+    await refreshVaultSettings();
+  } catch (e) { toast("Invite fehlgeschlagen: " + e.message, "err"); }
+});
+
+$("#vsInvites").addEventListener("click", async e => {
+  const btn = e.target.closest("button[data-act]"); if (!btn) return;
+  if (btn.dataset.act === "copy-invite") {
+    try { await navigator.clipboard.writeText(btn.dataset.url); toast("Link kopiert ✓", "ok"); }
+    catch (err) { toast("Kopieren fehlgeschlagen", "err"); }
+  }
+  if (btn.dataset.act === "revoke-invite") {
+    if (!confirm("Code widerrufen?")) return;
+    try {
+      await api(`/api/vault-invite?id=${encodeURIComponent(vaultId)}&code=${encodeURIComponent(btn.dataset.code)}`, { method: "DELETE" });
+      await refreshVaultSettings();
+    } catch (err) { toast("Widerrufen fehlgeschlagen: " + err.message, "err"); }
+  }
+});
+
+$("#vsDelete").addEventListener("click", async () => {
+  const name = vault.name;
+  const typed = prompt(`Zum Bestätigen "${name}" eintippen:`);
+  if (typed !== name) { toast("Abgebrochen", "warn"); return; }
+  try {
+    await api(`/api/vault?id=${encodeURIComponent(vaultId)}`, { method: "DELETE" });
+    toast("Vault gelöscht", "ok");
+    setTimeout(() => { window.location.href = "/"; }, 400);
+  } catch (e) { toast("Löschen fehlgeschlagen: " + e.message, "err"); }
+});
+
+$("#btnVaultSettings").addEventListener("click", async () => {
+  await refreshVaultSettings();
+  $("#vaultSettingsDlg").showModal();
+});
+$("#vsClose").addEventListener("click", () => $("#vaultSettingsDlg").close());
+
+// ============================================================
+// User Indicator + Auth
+// ============================================================
+function renderUserIndicator() {
+  const ind = $("#userIndicator");
+  if (!currentUser) { ind.style.display = "none"; return; }
+  ind.style.display = "";
+  const av = $("#userAvatar");
+  const ghAvatar = currentUser.github && currentUser.github.avatarUrl;
+  av.innerHTML = "";
+  if (ghAvatar) {
+    const img = document.createElement("img");
+    img.src = ghAvatar; img.alt = currentUser.displayName || currentUser.username;
+    av.appendChild(img);
+  } else {
+    av.textContent = (currentUser.displayName || currentUser.username || "?").charAt(0).toUpperCase();
+  }
+  av.title = (currentUser.displayName || currentUser.username) + " — Konto";
+  $("#umName").textContent = currentUser.displayName || currentUser.username;
+  $("#umHandle").textContent = "@" + currentUser.username + (currentUser.role === "admin" ? " · admin" : "");
+}
+$("#userAvatar").addEventListener("click", e => { e.stopPropagation(); $("#userMenu").classList.toggle("show"); });
+document.addEventListener("click", e => { if (!e.target.closest(".user-indicator")) $("#userMenu").classList.remove("show"); });
+$("#userMenu").addEventListener("click", e => {
+  const act = e.target.closest("button[data-act]")?.dataset.act;
+  if (!act) return;
+  $("#userMenu").classList.remove("show");
+  if (act === "dashboard") {
+    if (dirty && !confirm("Ungespeicherte Änderungen verwerfen?")) return;
+    window.location.href = "/";
+  }
+  if (act === "logout") { clearSession(); window.location.href = "/"; }
+});
+window.addEventListener("crashvault:auth-expired", () => {
+  toast("Sitzung abgelaufen — kehre zum Login zurück", "warn");
+  setTimeout(() => { window.location.href = "/"; }, 1000);
+});
+
+// ============================================================
+// Header buttons
+// ============================================================
+$("#btnSave").addEventListener("click", save);
+$("#btnDiscard").addEventListener("click", reload);
+$("#btnReload").addEventListener("click", reload);
+
+async function reload() {
+  if (dirty && !confirm("Ungespeicherte Änderungen verwerfen?")) return;
+  loading("Lade…");
+  try {
+    await loadVault();
+    await loadRegistry();
+    dirty = false; updateSaveButton(); render();
+    setStatus("ok", "Live"); toast("Neu geladen ✓", "ok");
+  } catch (e) { toast("Laden fehlgeschlagen: " + e.message, "err"); }
+  finally { loading(null); }
+}
+
+window.addEventListener("beforeunload", e => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+window.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); if (dirty) save(); }
+});
+
+// ============================================================
+// Init
+// ============================================================
+(async function init() {
+  const tok = getSession();
+  if (!tok) { window.location.href = "/"; return; }
+  try {
+    const r = await fetch("/api/auth/me", { headers: { "Authorization": "Bearer " + tok } });
+    if (r.status !== 200) { clearSession(); window.location.href = "/"; return; }
+    currentUser = (await r.json()).user;
+    document.body.classList.add("authed");
+    renderUserIndicator();
+  } catch (e) { clearSession(); window.location.href = "/"; return; }
+
+  // Cache-first paint of module grid
+  try {
+    const cached = JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY) || "null");
+    if (cached?.registry?.modules) { registry = cached.registry; render(); }
+  } catch (e) {}
+
+  setStatus("", "Lade…"); loading("Lade Vault…");
+  try {
+    await loadVault();
+    await loadRegistry();
+    render(); updateSaveButton();
+    setStatus("ok", "Live");
+  } catch (e) {
+    console.error(e);
+    if (e.status === 403 || e.status === 404) {
+      toast("Vault nicht zugänglich", "err");
+      setTimeout(() => { window.location.href = "/"; }, 1200);
+    } else {
+      toast("Server nicht erreichbar: " + e.message, "err");
+      setStatus("err", "Offline?"); render();
+    }
+  } finally { loading(null); }
+})();
+</script>
+</body>
+</html>

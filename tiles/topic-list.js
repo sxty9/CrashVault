@@ -236,7 +236,8 @@
       if (!file) return;
       if (file.size > 50 * 1024 * 1024) { toast("Datei > 50 MB — zu groß", "err"); return; }
       const id = uid();
-      const path = `modules/${ctx.moduleId}/files/${file.name}`;
+      // Vault-scoped attachment path. ctx.vaultId is set by module.html's tileCtx().
+      const path = `vaults/${ctx.vaultId}/modules/${ctx.moduleId}/files/${file.name}`;
       topic.attachments.push({ id, name: file.name, path, source: "local-pending" });
       ctx.uploadQueue.set(id, file);
       ctx.markDirty(); onChange();

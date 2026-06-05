@@ -84,6 +84,7 @@ async function tryAuth(req) {
 
 // Public-facing projection of an account — what the client sees in
 // /auth/me or /auth/login responses. Strips password + tokenVersion.
+// `github` is filled lazily by loadUserContext; default null.
 function publicUser(account) {
   if (!account) return null;
   return {
@@ -96,8 +97,55 @@ function publicUser(account) {
   };
 }
 
+// Settings-aware augmentation: fetch the user's settings file and attach the
+// github-linkage to the account object. Endpoints that mutate the repo (and
+// want author-attribution) call this after requireAuth.
+async function loadUserContext(user) {
+  try {
+    const settings = await gh.readUserSettings(user.id);
+    if (settings && settings.github) user.github = settings.github;
+  } catch (e) { /* user has no settings yet — fine */ }
+  return user;
+}
+
+// ============================================================
+// Vault membership guards. Both reuse requireAuth + the vaults index.
+// On success they return { user, vault } so the caller doesn't have to
+// re-lookup. On failure they throw with appropriate status codes.
+// ============================================================
+async function requireVaultMember(req, vaultId) {
+  if (!gh.validVaultId(vaultId)) {
+    const e = new Error("Invalid vault id"); e.status = 400; throw e;
+  }
+  const user = await requireAuth(req);
+  const idx = await gh.readVaultsIndex();
+  if (!idx) { const e = new Error("Vault system not initialized"); e.status = 404; throw e; }
+  const vault = (idx.vaults || []).find(v => v.id === vaultId);
+  if (!vault) { const e = new Error("Vault not found"); e.status = 404; throw e; }
+  if (!(vault.members || []).includes(user.id)) {
+    const e = new Error("Not a member of this vault"); e.status = 403; throw e;
+  }
+  return { user, vault, vaultsIndex: idx };
+}
+
+async function requireVaultOwner(req, vaultId) {
+  const ctx = await requireVaultMember(req, vaultId);
+  if (ctx.vault.owner !== ctx.user.id) {
+    const e = new Error("Vault owner access required"); e.status = 403; throw e;
+  }
+  return ctx;
+}
+
+// Admin-role gate for global config (allowSignup-toggle, user-management).
+async function requireAdmin(req) {
+  const user = await requireAuth(req);
+  if (user.role !== "admin") { const e = new Error("Admin access required"); e.status = 403; throw e; }
+  return user;
+}
+
 module.exports = {
   SESSION_TTL,
   signSession, verifySession, bearerToken,
-  requireAuth, tryAuth, publicUser
+  requireAuth, tryAuth, publicUser,
+  loadUserContext, requireVaultMember, requireVaultOwner, requireAdmin
 };

@@ -30,8 +30,13 @@ module.exports = async (req, res) => {
     if (!path || path.startsWith("/") || path.includes("..") || path.includes("\\")) {
       return gh.sendJson(res, 400, { error: "Invalid path" });
     }
-    if (!/^modules\/[a-z0-9][a-z0-9_-]{0,40}\/files\/[^/]+$/.test(path)) {
-      return gh.sendJson(res, 400, { error: "Pfad muss unter modules/<id>/files/ liegen" });
+    // Phase 2: paths live under vaults/<vid>/modules/<mid>/files/<name>.
+    // We deliberately don't auth-gate /api/file because attachments are
+    // opened via window.open() which can't attach an Authorization header.
+    // The Vercel-served repo content is publicly readable via raw.githubusercontent
+    // anyway, so adding auth here would give a false sense of confidentiality.
+    if (!/^vaults\/v_[a-z0-9]{6,40}\/modules\/[a-z0-9][a-z0-9_-]{0,40}\/files\/[^/]+$/.test(path)) {
+      return gh.sendJson(res, 400, { error: "Pfad muss unter vaults/<vid>/modules/<mid>/files/ liegen" });
     }
     const c = await gh.getContent(path);
     if (!c) return gh.sendJson(res, 404, { error: "Not found" });

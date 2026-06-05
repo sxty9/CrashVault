@@ -12,6 +12,8 @@
   <div class="crumbs">
     <a href="/">⚡ CrashVault</a>
     <span class="sep">›</span>
+    <a id="vaultLink" href="#">…</a>
+    <span class="sep">›</span>
     <span class="here" id="moduleName">…</span>
   </div>
   <div class="toolbar">
@@ -25,6 +27,7 @@
       <div class="user-menu" id="userMenu">
         <div class="uhead"><b id="umName">…</b><span id="umHandle">…</span></div>
         <hr>
+        <button data-act="vault">← Zum Vault</button>
         <button data-act="dashboard">Zum Dashboard</button>
         <button data-act="logout">Abmelden</button>
       </div>
@@ -85,12 +88,17 @@ let currentUser = null;
 
 const params = new URLSearchParams(location.search);
 const moduleId = params.get("id");
+const vaultId  = params.get("vault");
 if (!moduleId || !/^[a-z0-9][a-z0-9_-]{0,40}$/.test(moduleId)) {
   alert("Ungültige Modul-ID in der URL.");
   location.href = "/";
 }
+if (!vaultId || !/^v_[a-z0-9]{6,40}$/.test(vaultId)) {
+  alert("Vault-ID fehlt — bitte über den Vault öffnen.");
+  location.href = "/";
+}
 
-const LOCAL_CACHE_KEY = `crashvault-module-${moduleId}`;
+const LOCAL_CACHE_KEY = `crashvault-module-${vaultId}-${moduleId}`;
 
 let state = { id: moduleId, name: moduleId, tiles: [] };
 let baseSha = null;
@@ -108,7 +116,7 @@ let repoFiles = [];
 // data file act as a one-time fallback for first-time openers. Once a
 // user drags a tile, their local entry overrides the file value forever.
 // ============================================================
-const POSITIONS_KEY = `crashvault-positions-${moduleId}`;
+const POSITIONS_KEY = `crashvault-pos-${vaultId}-${moduleId}`;
 function getLocalPositions() {
   try { return JSON.parse(localStorage.getItem(POSITIONS_KEY) || "{}"); }
   catch (e) { return {}; }
@@ -160,13 +168,19 @@ function markDirty() {
 // Load / save
 // ============================================================
 async function loadFromServer() {
-  // Registry holds the authoritative module name. We always fetch it alongside
-  // the per-module data so the header reflects the dashboard rename instantly
-  // and the cached `name` field in the data file can never drift.
-  const [modJson, regJson] = await Promise.all([
-    apiJson(`/api/data?module=${encodeURIComponent(moduleId)}`),
-    apiJson("/api/registry").catch(() => ({ registry: { modules: [] } }))
+  // Vault-aware: the registry within the vault is the authoritative source
+  // for the module's display name. We fetch the vault meta in parallel so
+  // the breadcrumb can show the vault title without an extra round-trip.
+  const [modJson, regJson, vaultJson] = await Promise.all([
+    apiJson(`/api/data?vault=${encodeURIComponent(vaultId)}&module=${encodeURIComponent(moduleId)}`),
+    apiJson(`/api/registry?vault=${encodeURIComponent(vaultId)}`).catch(() => ({ registry: { modules: [] } })),
+    apiJson(`/api/vault?id=${encodeURIComponent(vaultId)}`).catch(() => null)
   ]);
+  if (vaultJson && vaultJson.vault) {
+    const link = $("#vaultLink");
+    link.textContent = vaultJson.vault.name;
+    link.href = `/vault.html?id=${encodeURIComponent(vaultId)}`;
+  }
   const regEntry = (regJson.registry?.modules || []).find(m => m.id === moduleId);
   if (modJson.state && Array.isArray(modJson.state.tiles)) {
     state = modJson.state;
@@ -181,7 +195,7 @@ async function loadFromServer() {
 
 async function loadRepoFiles() {
   try {
-    const json = await apiJson(`/api/files?module=${encodeURIComponent(moduleId)}`);
+    const json = await apiJson(`/api/files?vault=${encodeURIComponent(vaultId)}&module=${encodeURIComponent(moduleId)}`);
     repoFiles = (json.files || []).map(p => ({ path: p, name: p.split("/").pop() }));
   } catch (e) { console.warn("loadRepoFiles", e); repoFiles = []; }
 }
@@ -223,9 +237,10 @@ async function save() {
     // tile.x/y/w/h/z stays in the committed state so first-time openers see
     // the original "shared" layout. We never mutate those fields after a
     // tile is created — repositioning goes exclusively into localStorage.
-    const json = await apiPostJson(`/api/data?module=${encodeURIComponent(moduleId)}`, {
-      state, expectedSha: baseSha, fileShas
-    });
+    const json = await apiPostJson(
+      `/api/data?vault=${encodeURIComponent(vaultId)}&module=${encodeURIComponent(moduleId)}`,
+      { state, expectedSha: baseSha, fileShas }
+    );
     baseSha = json.sha;
     pendingUploads.clear();
     dirty = false; updateSaveButton();
@@ -264,6 +279,7 @@ function renderAll() {
 
 function tileCtx() {
   return {
+    vaultId,
     moduleId,
     moduleName: state.name || moduleId,
     markDirty,
@@ -942,6 +958,10 @@ $("#userMenu").addEventListener("click", async e => {
   const act = e.target.closest("button[data-act]")?.dataset.act;
   if (!act) return;
   $("#userMenu").classList.remove("show");
+  if (act === "vault") {
+    if (dirty && !confirm("Ungespeicherte Änderungen verwerfen?")) return;
+    window.location.href = `/vault.html?id=${encodeURIComponent(vaultId)}`;
+  }
   if (act === "dashboard") {
     if (dirty && !confirm("Ungespeicherte Änderungen verwerfen?")) return;
     window.location.href = "/";

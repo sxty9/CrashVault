@@ -1,7 +1,8 @@
-// GET /api/files?module=<id>  → { files: ["modules/<id>/files/foo.pdf", ...] }
+// GET /api/files?vault=<vid>&module=<mid>  → { files: [...] }
 //
-// Lists every file under modules/<id>/files/. Used by the attachment menu
-// inside a Themenliste tile so the user can pick already-uploaded files.
+// Lists every file under vaults/<vid>/modules/<mid>/files/. Member of the
+// vault required. Used by the attachment menu inside a Themenliste tile so
+// the user can pick already-uploaded files.
 
 const gh = require("./_github.js");
 const auth = require("./_auth.js");
@@ -12,12 +13,14 @@ module.exports = async (req, res) => {
       res.setHeader("Allow", "GET");
       return gh.sendJson(res, 405, { error: "Method not allowed" });
     }
-    await auth.requireAuth(req);
     const url = new URL(req.url, `http://${req.headers.host || "x"}`);
+    const vaultId  = url.searchParams.get("vault");
     const moduleId = url.searchParams.get("module");
+    if (!gh.validVaultId(vaultId))  return gh.sendJson(res, 400, { error: "vault query param invalid" });
     if (!gh.validModuleId(moduleId)) return gh.sendJson(res, 400, { error: "module query param invalid" });
+    await auth.requireVaultMember(req, vaultId);
 
-    const prefix = `modules/${moduleId}/files/`;
+    const prefix = gh.vaultModuleFilesPrefix(vaultId, moduleId);
     const tree = await gh.getTree();
     const files = (tree.tree || [])
       .filter(e => e.type === "blob" && e.path.startsWith(prefix))

@@ -1,15 +1,12 @@
-// GET  /api/data?module=<id>  → { state, sha }
-// POST /api/data?module=<id>  body: { state, expectedSha, fileShas: [{path,sha}] }
-//                              → { sha }
+// GET  /api/data?vault=<vid>&module=<mid>  → { state, sha }
+// POST /api/data?vault=<vid>&module=<mid>  body: { state, expectedSha, fileShas } → { sha }
 //
-// Per-module state. The file lives at modules/<id>/data.js and contains
-// { id, name, tiles: [...] } where every tile carries its own state subtree.
+// Per-module state under a vault. The file lives at
+// vaults/<vid>/modules/<mid>/data.js. The `fileShas` paths must all live
+// under vaults/<vid>/modules/<mid>/files/ — cross-vault writes are rejected.
 
 const gh = require("./_github.js");
 const auth = require("./_auth.js");
-
-function pathFor(id) { return `modules/${id}/data.js`; }
-function prefixFor(id) { return `modules/${id}/`; }
 
 function parseDataFile(text) {
   const m = text.match(/window\.CRASHVAULT_MODULE\s*=\s*([\s\S]+?);\s*$/);
@@ -29,14 +26,18 @@ function buildDataFile(state) {
 
 module.exports = async (req, res) => {
   try {
-    const me = await auth.requireAuth(req);
     const url = new URL(req.url, `http://${req.headers.host || "x"}`);
+    const vaultId = url.searchParams.get("vault");
     const moduleId = url.searchParams.get("module");
+    if (!gh.validVaultId(vaultId))  return gh.sendJson(res, 400, { error: "vault query param invalid" });
     if (!gh.validModuleId(moduleId)) return gh.sendJson(res, 400, { error: "module query param invalid" });
+    const ctx = await auth.requireVaultMember(req, vaultId);
+    const dataPath = gh.vaultModuleDataPath(vaultId, moduleId);
+    const filePrefix = gh.vaultModuleFilesPrefix(vaultId, moduleId);
 
     if (req.method === "GET") {
       const sha = await gh.getRefSha();
-      const c = await gh.getContent(pathFor(moduleId));
+      const c = await gh.getContent(dataPath);
       let state;
       if (!c) state = null;
       else {
@@ -57,12 +58,11 @@ module.exports = async (req, res) => {
       }
       const baseCommit = await gh.getCommit(currentSha);
       const dataBlob = await gh.createBlob(gh.utf8ToB64(buildDataFile(state)));
-      const treeEntries = [{ path: pathFor(moduleId), mode: "100644", type: "blob", sha: dataBlob.sha }];
+      const treeEntries = [{ path: dataPath, mode: "100644", type: "blob", sha: dataBlob.sha }];
 
-      const prefix = prefixFor(moduleId);
       for (const f of fileShas) {
         if (!f || !f.path || !f.sha) continue;
-        if (!f.path.startsWith(prefix)) {
+        if (!f.path.startsWith(filePrefix)) {
           return gh.sendJson(res, 400, { error: `file path außerhalb des Moduls: ${f.path}` });
         }
         treeEntries.push({ path: f.path, mode: "100644", type: "blob", sha: f.sha });
@@ -70,10 +70,11 @@ module.exports = async (req, res) => {
 
       const tree = await gh.createTree(baseCommit.tree.sha, treeEntries);
       const message = fileShas.length
-        ? `[${me.username}] ${moduleId}: data + ${fileShas.length} Anhang(e)`
-        : `[${me.username}] ${moduleId}: data aktualisiert`;
-      const author = (me.github && me.github.commitEmail)
-        ? { name: me.github.login || me.username, email: me.github.commitEmail }
+        ? `[${ctx.user.username}] ${ctx.vault.name}/${moduleId}: data + ${fileShas.length} Anhang(e)`
+        : `[${ctx.user.username}] ${ctx.vault.name}/${moduleId}: data aktualisiert`;
+      await auth.loadUserContext(ctx.user);
+      const author = (ctx.user.github && ctx.user.github.commitEmail)
+        ? { name: ctx.user.github.login || ctx.user.username, email: ctx.user.github.commitEmail }
         : null;
       const commit = await gh.createCommit(message, tree.sha, currentSha, author);
       await gh.updateRef(commit.sha);

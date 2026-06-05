@@ -1,14 +1,12 @@
-// GET  /api/registry  → { registry, sha }
-// POST /api/registry  body: { registry, expectedSha }  → { sha }
+// GET  /api/registry?vault=<vid>  → { registry, sha }
+// POST /api/registry?vault=<vid>  body: { registry, expectedSha } → { sha }
 //
-// The registry lists every module a user has created. It lives in
-// modules/registry.js so both the runtime (window.CRASHVAULT_REGISTRY) and the
-// API parser can read the same file.
+// The per-vault module registry lives at vaults/<vid>/modules/registry.js.
+// Membership in the vault is required for both directions.
 
 const gh = require("./_github.js");
 const auth = require("./_auth.js");
 
-const REGISTRY_FILE = "modules/registry.js";
 const DEFAULTS = { modules: [] };
 
 function parseRegistry(text) {
@@ -24,7 +22,11 @@ function buildRegistry(state) {
 
 module.exports = async (req, res) => {
   try {
-    const me = await auth.requireAuth(req);
+    const url = new URL(req.url, `http://${req.headers.host || "x"}`);
+    const vaultId = url.searchParams.get("vault");
+    if (!gh.validVaultId(vaultId)) return gh.sendJson(res, 400, { error: "vault query param invalid" });
+    const ctx = await auth.requireVaultMember(req, vaultId);
+    const REGISTRY_FILE = gh.vaultModuleRegistryPath(vaultId);
 
     if (req.method === "GET") {
       const sha = await gh.getRefSha();
@@ -58,11 +60,12 @@ module.exports = async (req, res) => {
       const tree = await gh.createTree(baseCommit.tree.sha, [
         { path: REGISTRY_FILE, mode: "100644", type: "blob", sha: blob.sha }
       ]);
-      const author = (me.github && me.github.commitEmail)
-        ? { name: me.github.login || me.username, email: me.github.commitEmail }
+      await auth.loadUserContext(ctx.user);
+      const author = (ctx.user.github && ctx.user.github.commitEmail)
+        ? { name: ctx.user.github.login || ctx.user.username, email: ctx.user.github.commitEmail }
         : null;
       const commit = await gh.createCommit(
-        `[${me.username}] registry aktualisiert`,
+        `[${ctx.user.username}] ${ctx.vault.name}: registry aktualisiert`,
         tree.sha, currentSha, author
       );
       await gh.updateRef(commit.sha);

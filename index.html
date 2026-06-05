@@ -46,8 +46,6 @@
     <span class="status-pill" id="statusPill">…</span>
     <button class="ghost small" id="btnSettings" title="Einstellungen">⚙</button>
     <button class="ghost small" id="btnReload" title="Neu laden">↻</button>
-    <button class="ghost small" id="btnDiscard" style="display:none">Verwerfen</button>
-    <button class="primary save-btn" id="btnSave"><span class="dot"></span><span id="saveLabel">Gespeichert</span></button>
     <span class="user-indicator" id="userIndicator" style="display:none">
       <div class="user-avatar" id="userAvatar" title="Konto"></div>
       <div class="user-menu" id="userMenu">
@@ -61,20 +59,20 @@
 </header>
 
 <main class="dashboard">
-  <p class="intro">Deine Klausurmodule. Klick auf ein Modul, um Themen, Sprüche und Karteikarten zu pflegen.</p>
-  <div class="module-grid" id="moduleGrid"></div>
+  <p class="intro">Deine Vaults. Jeder Vault ist ein Workspace mit eigenen Modulen — privat, oder geteilt.</p>
+  <div class="module-grid" id="vaultGrid"></div>
   <div id="emptyState" style="display:none">
     <div class="empty-state">
-      <h2>Noch kein Modul</h2>
-      <p>Lege dein erstes Klausurmodul an — z.B. „BWL Klausurvorbereitung", „Rechnernetze", „Diskrete Mathematik II".</p>
-      <button class="primary" id="btnAddFirst">+ Erstes Modul anlegen</button>
+      <h2>Noch kein Vault</h2>
+      <p>Lege deinen ersten Vault an — er sammelt alle Module zu einem Klausuren-Thema oder einer Lerngruppe.</p>
+      <button class="primary" id="btnAddFirst">+ Ersten Vault anlegen</button>
     </div>
   </div>
 </main>
 
 <dialog id="settingsDlg">
   <h3>Einstellungen</h3>
-  <p class="dlg-sub">Per-Gerät gespeicherte Konfiguration — gilt nur in diesem Browser.</p>
+  <p class="dlg-sub">Per-Account gespeicherte Features und Konfiguration.</p>
   <div class="settings-section">
     <h4>Features</h4>
     <div id="featureList"></div>
@@ -86,17 +84,12 @@
 
 <dialog id="featureConfigDlg"></dialog>
 
-<dialog id="addModuleDlg">
-  <h3>Neues Modul</h3>
+<dialog id="addVaultDlg">
+  <h3>Neuer Vault</h3>
   <div style="display:flex;flex-direction:column;gap:12px;min-width:340px;">
     <div>
       <label style="display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Name</label>
-      <input type="text" id="newModuleName" placeholder="z.B. Rechnernetze" style="width:100%;">
-    </div>
-    <div>
-      <label style="display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">ID (URL-Slug)</label>
-      <input type="text" id="newModuleId" placeholder="z.B. rechnernetze" style="width:100%;">
-      <div style="font-size:11px;color:var(--muted);margin-top:4px">Nur Kleinbuchstaben, Zahlen, "-" und "_". Wird automatisch aus dem Namen abgeleitet.</div>
+      <input type="text" id="newVaultName" placeholder="z.B. BWL Klausurvorbereitung" style="width:100%;">
     </div>
     <div>
       <label style="display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Farbe</label>
@@ -104,8 +97,17 @@
     </div>
   </div>
   <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
-    <button id="cancelAddModule">Abbrechen</button>
-    <button class="primary" id="confirmAddModule">Anlegen</button>
+    <button id="cancelAddVault">Abbrechen</button>
+    <button class="primary" id="confirmAddVault">Anlegen</button>
+  </div>
+</dialog>
+
+<dialog id="joinDlg">
+  <h3>Vault beitreten</h3>
+  <p class="dlg-sub" id="joinSub">Du wurdest eingeladen. Möchtest du jetzt beitreten?</p>
+  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
+    <button id="cancelJoin">Später</button>
+    <button class="primary" id="confirmJoin">Beitreten</button>
   </div>
 </dialog>
 
@@ -114,177 +116,102 @@
 <script>
 "use strict";
 
-const { $, uid, escapeText, escapeAttr, slugify, toast, loading, api, apiPostJson, getFeatureState, saveFeatureState, getSession, setSession, clearSession } = window.CV;
+const { $, escapeText, escapeAttr, toast, loading, api, apiPostJson, getFeatureState, saveFeatureState, getSession, setSession, clearSession } = window.CV;
 let currentUser = null;
 let authConfig = { allowSignup: false };
+let vaults = [];
 
-const LOCAL_CACHE_KEY = "crashvault-registry-cache";
 const COLORS = ["#38bdf8", "#a78bfa", "#4ade80", "#fbbf24", "#f87171", "#f472b6", "#22d3ee", "#fb923c"];
-
-let registry = { modules: [] };
-let baseSha = null;
-let dirty = false;
 
 function setStatus(kind, text) {
   const el = $("#statusPill"); el.className = "status-pill " + (kind || ""); el.textContent = text;
 }
-function updateSaveButton() {
-  const btn = $("#btnSave"); const label = $("#saveLabel");
-  const dot = btn.querySelector(".dot"); const discard = $("#btnDiscard");
-  if (dirty) { btn.disabled = false; label.textContent = "Speichern"; dot.style.background = "#0f172a"; discard.style.display = ""; }
-  else      { btn.disabled = true;  label.textContent = "✓ Gespeichert"; dot.style.background = "transparent"; discard.style.display = "none"; }
-}
-function markDirty() {
-  dirty = true; updateSaveButton();
-  try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ registry, ts: Date.now() })); } catch (e) {}
-}
 
-async function loadRegistry() {
+// ============================================================
+// Auth-Gate (Phase 1, lightly adapted)
+// ============================================================
+const authForm = $("#authForm"), authGate = $("#authGate"), authSub = $("#authSub"), authMsg = $("#authMsg"), authSubmit = $("#authSubmit");
+let currentMode = "signin";
+let pendingJoinCode = null; // captured from ?join=<code> before login
+
+function setAuthMsg(text, kind) {
+  if (!text) { authMsg.className = "auth-msg"; authMsg.textContent = ""; return; }
+  authMsg.className = "auth-msg show " + (kind || "");
+  authMsg.textContent = text;
+}
+function setAuthMode(mode) {
+  currentMode = mode;
+  for (const btn of $("#authTabs").querySelectorAll("button")) btn.classList.toggle("active", btn.dataset.tab === mode);
+  const showSignup = (mode === "signup" || mode === "bootstrap");
+  authForm.querySelector("[data-field='displayName']").style.display = showSignup ? "" : "none";
+  authForm.querySelector("[data-field='passwordConfirm']").style.display = showSignup ? "" : "none";
+  authForm.elements.password.setAttribute("autocomplete", showSignup ? "new-password" : "current-password");
+  if (mode === "bootstrap") { authSub.textContent = "Erster Account → wird automatisch Admin"; authSubmit.textContent = "Repo initialisieren"; }
+  else if (mode === "signup") { authSub.textContent = "Neuen Account anlegen"; authSubmit.textContent = "Registrieren"; }
+  else { authSub.textContent = pendingJoinCode ? "Anmelden — du wirst direkt zum Vault weitergeleitet" : "Anmelden um fortzufahren"; authSubmit.textContent = "Anmelden"; }
+  setAuthMsg(null);
+}
+function showAuthGate(mode) {
+  document.body.classList.remove("authed");
+  authGate.classList.add("show");
+  const tabs = $("#authTabs");
+  const isBootstrap = mode === "bootstrap";
+  tabs.querySelector("[data-tab='signin']").style.display    = isBootstrap ? "none" : "";
+  tabs.querySelector("[data-tab='signup']").style.display    = (!isBootstrap && authConfig.allowSignup) ? "" : "none";
+  tabs.querySelector("[data-tab='bootstrap']").style.display = isBootstrap ? "" : "none";
+  const visible = Array.from(tabs.querySelectorAll("button[data-tab]")).filter(b => b.style.display !== "none").length;
+  tabs.style.display = visible > 1 ? "" : "none";
+  setAuthMode(mode);
+  setTimeout(() => authForm.elements.username.focus(), 0);
+}
+function hideAuthGate() {
+  authGate.classList.remove("show");
+  document.body.classList.add("authed");
+}
+$("#authTabs").addEventListener("click", e => {
+  const tab = e.target.closest("button[data-tab]"); if (tab) setAuthMode(tab.dataset.tab);
+});
+authForm.addEventListener("submit", async e => {
+  e.preventDefault();
+  const fd = new FormData(authForm);
+  const username = (fd.get("username") || "").toString().trim().toLowerCase();
+  const password = (fd.get("password") || "").toString();
+  const displayName = (fd.get("displayName") || "").toString().trim();
+  const confirm = (fd.get("passwordConfirm") || "").toString();
+  if (currentMode === "signup" || currentMode === "bootstrap") {
+    if (password !== confirm) { setAuthMsg("Passwörter stimmen nicht überein", "err"); return; }
+    if (password.length < 8) { setAuthMsg("Passwort muss mindestens 8 Zeichen lang sein", "err"); return; }
+  }
+  authSubmit.disabled = true;
+  const orig = authSubmit.textContent;
+  authSubmit.textContent = "…";
   try {
-    const r = await api("/api/registry");
-    const json = await r.json();
-    registry = json.registry || { modules: [] };
-    if (!Array.isArray(registry.modules)) registry.modules = [];
-    baseSha = json.sha || null;
-    try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ registry, ts: Date.now() })); } catch (e) {}
-  } catch (e) {
-    setStatus("err", "Offline?");
-    throw e;
-  }
-}
-
-async function save() {
-  if (!dirty) return;
-  const btn = $("#btnSave"); const label = $("#saveLabel");
-  btn.disabled = true; label.textContent = "Speichere…";
-  try {
-    const json = await apiPostJson("/api/registry", { registry, expectedSha: baseSha });
-    baseSha = json.sha;
-    dirty = false;
-    updateSaveButton();
-    setStatus("ok", "Live");
-    toast("Gespeichert ✓", "ok");
-  } catch (e) {
-    dirty = true; updateSaveButton();
-    if (e.status === 409) { toast(e.message, "err"); setStatus("err", "Konflikt"); }
-    else { toast("Speichern fehlgeschlagen: " + e.message, "err"); setStatus("err", "Offline?"); }
-  }
-}
-
-function render() {
-  const grid = $("#moduleGrid");
-  const empty = $("#emptyState");
-  grid.innerHTML = "";
-  if (!registry.modules.length) {
-    grid.style.display = "none";
-    empty.style.display = "block";
-    return;
-  }
-  grid.style.display = "";
-  empty.style.display = "none";
-
-  registry.modules.forEach((m, idx) => {
-    const card = document.createElement("div");
-    card.className = "module-card";
-    card.innerHTML = `
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span class="badge" style="background:${escapeAttr(m.color || "#38bdf8")}"></span>
-        <span class="name">${escapeText(m.name)}</span>
-      </div>
-      <div class="meta">${escapeText(m.id)}</div>
-      <div style="margin-top:auto;font-size:12px;color:var(--muted);">${m.description ? escapeText(m.description) : "Modul öffnen →"}</div>
-      <div class="actions">
-        <button class="small ghost" data-act="rename" title="Umbenennen">✎</button>
-        <button class="small danger" data-act="del" title="Modul löschen">✕</button>
-      </div>
-    `;
-    card.addEventListener("click", async e => {
-      if (e.target.closest("[data-act]")) return;
-      // If the dashboard has unsaved changes (typically: this module was just
-      // added), commit them first. Otherwise the module page would load but
-      // the server has no entry for this id yet, and a back-nav loses the
-      // module entirely.
-      if (dirty) {
-        try { await save(); }
-        catch (err) { toast("Erst speichern fehlgeschlagen: " + err.message, "err"); return; }
-        if (dirty) return; // save still failed, abort nav
+    const path = currentMode === "signin" ? "/api/auth/login" : "/api/auth/signup";
+    const body = currentMode === "signin" ? { username, password } : { username, password, displayName };
+    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (r.status === 410 && data.needsBootstrap) {
+        setAuthMsg("Repo ist leer — bitte ersten Account anlegen.", "info");
+        authConfig = data.config || authConfig;
+        showAuthGate("bootstrap"); return;
       }
-      window.location.href = `/module.html?id=${encodeURIComponent(m.id)}`;
-    });
-    card.querySelector("[data-act='rename']").addEventListener("click", e => {
-      e.stopPropagation();
-      const next = prompt("Neuer Name:", m.name);
-      if (next === null) return;
-      const trimmed = next.trim();
-      if (!trimmed) return;
-      m.name = trimmed;
-      markDirty(); render();
-    });
-    card.querySelector("[data-act='del']").addEventListener("click", e => {
-      e.stopPropagation();
-      if (!confirm(`Modul "${m.name}" wirklich löschen?\n\nDas entfernt nur den Eintrag aus der Übersicht. Die Daten (modules/${m.id}/) bleiben im Repo erhalten — du kannst sie später manuell wieder eintragen oder vollständig aus dem Repo löschen.`)) return;
-      registry.modules.splice(idx, 1);
-      markDirty(); render();
-    });
-    grid.appendChild(card);
-  });
-
-  const addCard = document.createElement("div");
-  addCard.className = "module-card add";
-  addCard.innerHTML = `<div class="plus">+</div><div class="lbl">Neues Modul</div>`;
-  addCard.addEventListener("click", openAddDialog);
-  grid.appendChild(addCard);
-}
+      setAuthMsg(data.error || `Fehler ${r.status}`, "err"); return;
+    }
+    setSession(data.token);
+    currentUser = data.user;
+    hideAuthGate();
+    renderUserIndicator();
+    await bootDashboard();
+  } catch (err) { setAuthMsg("Netzwerkfehler: " + err.message, "err"); }
+  finally { authSubmit.disabled = false; authSubmit.textContent = orig; }
+});
 
 // ============================================================
-// Add-module dialog
-// ============================================================
-let selectedColor = COLORS[0];
-function renderColorPicker() {
-  const p = $("#colorPicker");
-  p.innerHTML = "";
-  COLORS.forEach(c => {
-    const sw = document.createElement("button");
-    sw.style.cssText = `width:28px;height:28px;border-radius:6px;border:2px solid ${c === selectedColor ? "var(--text)" : "transparent"};background:${c};padding:0;cursor:pointer;`;
-    sw.addEventListener("click", () => { selectedColor = c; renderColorPicker(); });
-    p.appendChild(sw);
-  });
-}
-function openAddDialog() {
-  selectedColor = COLORS[registry.modules.length % COLORS.length];
-  $("#newModuleName").value = "";
-  $("#newModuleId").value = "";
-  renderColorPicker();
-  $("#addModuleDlg").showModal();
-  setTimeout(() => $("#newModuleName").focus(), 0);
-}
-$("#newModuleName").addEventListener("input", e => {
-  const idEl = $("#newModuleId");
-  if (!idEl.dataset.touched) idEl.value = slugify(e.target.value);
-});
-$("#newModuleId").addEventListener("input", e => {
-  e.target.dataset.touched = "1";
-  e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-});
-$("#cancelAddModule").addEventListener("click", () => $("#addModuleDlg").close());
-$("#confirmAddModule").addEventListener("click", () => {
-  const name = $("#newModuleName").value.trim();
-  const id = $("#newModuleId").value.trim();
-  if (!name) { toast("Name fehlt", "warn"); return; }
-  if (!/^[a-z0-9][a-z0-9_-]{0,40}$/.test(id)) { toast("ID muss mit Buchstabe/Zahl beginnen und nur a-z 0-9 _ - enthalten", "warn"); return; }
-  if (registry.modules.some(m => m.id === id)) { toast("ID bereits vergeben", "err"); return; }
-  registry.modules.push({ id, name, color: selectedColor, createdAt: new Date().toISOString() });
-  $("#addModuleDlg").close();
-  markDirty(); render();
-});
-$("#btnAddFirst").addEventListener("click", openAddDialog);
-
-// ============================================================
-// Settings dialog + Features
+// Settings dialog (Features list — unchanged from Phase 1)
 // ============================================================
 function renderFeatureList() {
-  const list = $("#featureList");
-  list.innerHTML = "";
+  const list = $("#featureList"); list.innerHTML = "";
   const features = window.CV_FEATURES || {};
   if (!Object.keys(features).length) {
     list.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:8px 0">Keine Features installiert.</div>`;
@@ -302,10 +229,7 @@ function renderFeatureList() {
       </div>
       <div class="feat-actions">
         <button class="small" data-act="config" title="Konfigurieren">⚙</button>
-        <label class="switch">
-          <input type="checkbox" ${st.enabled ? "checked" : ""}>
-          <span class="slider"></span>
-        </label>
+        <label class="switch"><input type="checkbox" ${st.enabled ? "checked" : ""}><span class="slider"></span></label>
       </div>
     `;
     row.querySelector("input").addEventListener("change", e => {
@@ -317,169 +241,21 @@ function renderFeatureList() {
     list.appendChild(row);
   }
 }
-
 function openFeatureConfig(featureId) {
   const feat = (window.CV_FEATURES || {})[featureId];
-  if (!feat || typeof feat.renderConfig !== "function") {
-    toast("Dieses Feature hat keine Konfiguration", "warn");
-    return;
-  }
+  if (!feat || typeof feat.renderConfig !== "function") { toast("Dieses Feature hat keine Konfiguration", "warn"); return; }
   const dlg = $("#featureConfigDlg");
   const current = getFeatureState(featureId);
   feat.renderConfig(dlg, current.config, (next) => {
     if (next === null) { dlg.close(); return; }
     saveFeatureState(featureId, { enabled: current.enabled, config: next });
     toast(`${feat.label}: Einstellungen gespeichert ✓`, "ok");
-    dlg.close();
-    renderFeatureList();
+    dlg.close(); renderFeatureList();
   });
   dlg.showModal();
 }
-
 $("#btnSettings").addEventListener("click", () => { renderFeatureList(); $("#settingsDlg").showModal(); });
 $("#closeSettings").addEventListener("click", () => $("#settingsDlg").close());
-
-// ============================================================
-// Wiring
-// ============================================================
-$("#btnSave").addEventListener("click", save);
-$("#btnDiscard").addEventListener("click", reload);
-$("#btnReload").addEventListener("click", reload);
-
-async function reload() {
-  if (dirty && !confirm("Ungespeicherte Änderungen verwerfen?")) return;
-  loading("Lade…");
-  try {
-    await loadRegistry();
-    dirty = false; updateSaveButton(); render();
-    setStatus("ok", "Live");
-    toast("Neu geladen ✓", "ok");
-  } catch (e) {
-    toast("Laden fehlgeschlagen: " + e.message, "err");
-  } finally { loading(null); }
-}
-
-window.addEventListener("beforeunload", e => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
-window.addEventListener("keydown", e => {
-  if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); if (dirty) save(); }
-});
-
-// ============================================================
-// Auth-Gate
-// ============================================================
-const authForm = $("#authForm");
-const authGate = $("#authGate");
-const authSub  = $("#authSub");
-const authMsg  = $("#authMsg");
-const authSubmit = $("#authSubmit");
-
-let currentMode = "signin";
-
-function setAuthMsg(text, kind) {
-  if (!text) { authMsg.className = "auth-msg"; authMsg.textContent = ""; return; }
-  authMsg.className = "auth-msg show " + (kind || "");
-  authMsg.textContent = text;
-}
-
-function setAuthMode(mode) {
-  currentMode = mode;
-  for (const btn of $("#authTabs").querySelectorAll("button")) {
-    btn.classList.toggle("active", btn.dataset.tab === mode);
-  }
-  const showSignupFields = (mode === "signup" || mode === "bootstrap");
-  authForm.querySelector("[data-field='displayName']").style.display = showSignupFields ? "" : "none";
-  authForm.querySelector("[data-field='passwordConfirm']").style.display = showSignupFields ? "" : "none";
-  authForm.elements.password.setAttribute("autocomplete", showSignupFields ? "new-password" : "current-password");
-  if (mode === "bootstrap") {
-    authSub.textContent = "Erster Account → wird automatisch Admin";
-    authSubmit.textContent = "Repo initialisieren";
-  } else if (mode === "signup") {
-    authSub.textContent = "Neuen Account anlegen";
-    authSubmit.textContent = "Registrieren";
-  } else {
-    authSub.textContent = "Anmelden um fortzufahren";
-    authSubmit.textContent = "Anmelden";
-  }
-  setAuthMsg(null);
-}
-
-function showAuthGate(mode) {
-  document.body.classList.remove("authed");
-  authGate.classList.add("show");
-  // Show/hide tabs based on what's allowed
-  const tabs = $("#authTabs");
-  const isBootstrap = mode === "bootstrap";
-  tabs.querySelector("[data-tab='signin']").style.display     = isBootstrap ? "none" : "";
-  tabs.querySelector("[data-tab='signup']").style.display     = (!isBootstrap && authConfig.allowSignup) ? "" : "none";
-  tabs.querySelector("[data-tab='bootstrap']").style.display  = isBootstrap ? "" : "none";
-  // Hide the entire tab strip when there's only one visible tab — a single-
-  // tab strip looks like a redundant clone of the submit button below.
-  const visibleTabs = Array.from(tabs.querySelectorAll("button[data-tab]"))
-    .filter(b => b.style.display !== "none").length;
-  tabs.style.display = visibleTabs > 1 ? "" : "none";
-  setAuthMode(mode);
-  setTimeout(() => authForm.elements.username.focus(), 0);
-}
-
-function hideAuthGate() {
-  authGate.classList.remove("show");
-  document.body.classList.add("authed");
-}
-
-$("#authTabs").addEventListener("click", e => {
-  const tab = e.target.closest("button[data-tab]");
-  if (!tab) return;
-  setAuthMode(tab.dataset.tab);
-});
-
-authForm.addEventListener("submit", async e => {
-  e.preventDefault();
-  const fd = new FormData(authForm);
-  const username = (fd.get("username") || "").toString().trim().toLowerCase();
-  const password = (fd.get("password") || "").toString();
-  const displayName = (fd.get("displayName") || "").toString().trim();
-  const confirm = (fd.get("passwordConfirm") || "").toString();
-
-  if (currentMode === "signup" || currentMode === "bootstrap") {
-    if (password !== confirm) { setAuthMsg("Passwörter stimmen nicht überein", "err"); return; }
-    if (password.length < 8)  { setAuthMsg("Passwort muss mindestens 8 Zeichen lang sein", "err"); return; }
-  }
-
-  authSubmit.disabled = true;
-  const origText = authSubmit.textContent;
-  authSubmit.textContent = "…";
-  try {
-    const path = currentMode === "signin" ? "/api/auth/login" : "/api/auth/signup";
-    const body = currentMode === "signin"
-      ? { username, password }
-      : { username, password, displayName };
-    const r = await fetch(path, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      if (r.status === 410 && data.needsBootstrap) {
-        setAuthMsg("Repo ist leer — bitte ersten Account anlegen.", "info");
-        authConfig = data.config || authConfig;
-        showAuthGate("bootstrap");
-        return;
-      }
-      setAuthMsg(data.error || `Fehler ${r.status}`, "err");
-      return;
-    }
-    setSession(data.token);
-    currentUser = data.user;
-    hideAuthGate();
-    renderUserIndicator();
-    bootDashboard();
-  } catch (err) {
-    setAuthMsg("Netzwerkfehler: " + err.message, "err");
-  } finally {
-    authSubmit.disabled = false;
-    authSubmit.textContent = origText;
-  }
-});
 
 // ============================================================
 // User indicator
@@ -496,22 +272,15 @@ function renderUserIndicator() {
     img.src = ghAvatar; img.alt = currentUser.displayName || currentUser.username;
     av.appendChild(img);
   } else {
-    const name = (currentUser.displayName || currentUser.username || "?").trim();
-    av.textContent = name.charAt(0).toUpperCase();
+    av.textContent = (currentUser.displayName || currentUser.username || "?").charAt(0).toUpperCase();
   }
   av.title = (currentUser.displayName || currentUser.username) + " — Konto";
   $("#umName").textContent = currentUser.displayName || currentUser.username;
   $("#umHandle").textContent = "@" + currentUser.username + (currentUser.role === "admin" ? " · admin" : "");
 }
-
-$("#userAvatar").addEventListener("click", e => {
-  e.stopPropagation();
-  $("#userMenu").classList.toggle("show");
-});
-document.addEventListener("click", e => {
-  if (!e.target.closest(".user-indicator")) $("#userMenu").classList.remove("show");
-});
-$("#userMenu").addEventListener("click", async e => {
+$("#userAvatar").addEventListener("click", e => { e.stopPropagation(); $("#userMenu").classList.toggle("show"); });
+document.addEventListener("click", e => { if (!e.target.closest(".user-indicator")) $("#userMenu").classList.remove("show"); });
+$("#userMenu").addEventListener("click", e => {
   const act = e.target.closest("button[data-act]")?.dataset.act;
   if (!act) return;
   $("#userMenu").classList.remove("show");
@@ -522,59 +291,168 @@ $("#userMenu").addEventListener("click", async e => {
     showAuthGate("signin");
   }
 });
-
 window.addEventListener("crashvault:auth-expired", () => {
-  currentUser = null;
-  renderUserIndicator();
+  currentUser = null; renderUserIndicator();
   toast("Sitzung abgelaufen — bitte neu anmelden", "warn");
   showAuthGate("signin");
 });
 
 // ============================================================
-// Dashboard bootstrap (only runs once auth is OK)
+// Vault dashboard
 // ============================================================
-async function bootDashboard() {
-  try {
-    const cached = JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY) || "null");
-    if (cached?.registry?.modules) { registry = cached.registry; render(); }
-  } catch (e) {}
+async function loadVaults() {
+  const json = await (await api("/api/vaults")).json();
+  vaults = json.vaults || [];
+}
+function render() {
+  const grid = $("#vaultGrid");
+  const empty = $("#emptyState");
+  grid.innerHTML = "";
+  if (!vaults.length) {
+    grid.style.display = "none"; empty.style.display = "block"; return;
+  }
+  grid.style.display = ""; empty.style.display = "none";
 
-  setStatus("", "Lade…"); loading("Lade Module…");
-  try {
-    await loadRegistry();
-    render(); updateSaveButton();
-    setStatus("ok", "Live");
-  } catch (e) {
-    console.error(e);
-    toast("Server nicht erreichbar: " + e.message, "err");
-    render();
-  } finally { loading(null); }
+  vaults.forEach(v => {
+    const card = document.createElement("div");
+    card.className = "module-card";
+    const memberCount = (v.members || []).length;
+    const isOwner = v.owner === currentUser.id;
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="badge" style="background:${escapeAttr(v.color || "#38bdf8")}"></span>
+        <span class="name">${escapeText(v.name)}</span>
+      </div>
+      <div class="meta">${memberCount} Mitglied${memberCount === 1 ? "" : "er"}${isOwner ? " · Owner" : ""}</div>
+      <div style="margin-top:auto;font-size:12px;color:var(--muted);">Vault öffnen →</div>
+    `;
+    card.addEventListener("click", () => {
+      window.location.href = `/vault.html?id=${encodeURIComponent(v.id)}`;
+    });
+    grid.appendChild(card);
+  });
+
+  const addCard = document.createElement("div");
+  addCard.className = "module-card add";
+  addCard.innerHTML = `<div class="plus">+</div><div class="lbl">Neuer Vault</div>`;
+  addCard.addEventListener("click", openAddVaultDialog);
+  grid.appendChild(addCard);
 }
 
 // ============================================================
-// Init — figure out auth state, then either gate or boot
+// Add-Vault-Dialog
 // ============================================================
+let selectedColor = COLORS[0];
+function renderColorPicker() {
+  const p = $("#colorPicker"); p.innerHTML = "";
+  COLORS.forEach(c => {
+    const sw = document.createElement("button");
+    sw.style.cssText = `width:28px;height:28px;border-radius:6px;border:2px solid ${c === selectedColor ? "var(--text)" : "transparent"};background:${c};padding:0;cursor:pointer;`;
+    sw.addEventListener("click", () => { selectedColor = c; renderColorPicker(); });
+    p.appendChild(sw);
+  });
+}
+function openAddVaultDialog() {
+  selectedColor = COLORS[vaults.length % COLORS.length];
+  $("#newVaultName").value = "";
+  renderColorPicker();
+  $("#addVaultDlg").showModal();
+  setTimeout(() => $("#newVaultName").focus(), 0);
+}
+$("#cancelAddVault").addEventListener("click", () => $("#addVaultDlg").close());
+$("#confirmAddVault").addEventListener("click", async () => {
+  const name = $("#newVaultName").value.trim();
+  if (!name) { toast("Name fehlt", "warn"); return; }
+  try {
+    const res = await apiPostJson("/api/vaults", { name, color: selectedColor });
+    vaults.unshift(res.vault);
+    $("#addVaultDlg").close();
+    render();
+    toast("Vault angelegt ✓", "ok");
+  } catch (e) {
+    toast("Anlegen fehlgeschlagen: " + e.message, "err");
+  }
+});
+$("#btnAddFirst").addEventListener("click", openAddVaultDialog);
+
+// ============================================================
+// Invite-Join-Flow (?join=<code>)
+// ============================================================
+async function handlePendingJoin() {
+  if (!pendingJoinCode) return false;
+  $("#joinSub").textContent = `Du hast einen Invite-Link bekommen. Möchtest du jetzt beitreten?`;
+  $("#joinDlg").showModal();
+  return true;
+}
+$("#cancelJoin").addEventListener("click", () => {
+  $("#joinDlg").close(); pendingJoinCode = null;
+  history.replaceState(null, "", "/");
+});
+$("#confirmJoin").addEventListener("click", async () => {
+  if (!pendingJoinCode) { $("#joinDlg").close(); return; }
+  try {
+    const res = await apiPostJson(`/api/vault-join?code=${encodeURIComponent(pendingJoinCode)}`, {});
+    $("#joinDlg").close();
+    pendingJoinCode = null;
+    history.replaceState(null, "", "/");
+    toast("Beigetreten ✓", "ok");
+    window.location.href = `/vault.html?id=${encodeURIComponent(res.vault.id)}`;
+  } catch (e) {
+    toast("Beitreten fehlgeschlagen: " + e.message, "err");
+  }
+});
+
+// ============================================================
+// Reload + init
+// ============================================================
+$("#btnReload").addEventListener("click", reload);
+
+async function reload() {
+  loading("Lade…");
+  try {
+    await loadVaults();
+    render();
+    setStatus("ok", "Live");
+  } catch (e) {
+    toast("Laden fehlgeschlagen: " + e.message, "err");
+    setStatus("err", "Offline?");
+  } finally { loading(null); }
+}
+
+async function bootDashboard() {
+  setStatus("", "Lade…"); loading("Lade Vaults…");
+  try {
+    await loadVaults();
+    render();
+    setStatus("ok", "Live");
+    await handlePendingJoin();
+  } catch (e) {
+    console.error(e);
+    toast("Server nicht erreichbar: " + e.message, "err");
+    setStatus("err", "Offline?");
+  } finally { loading(null); }
+}
+
 (async function init() {
+  // Capture pending join-code BEFORE auth-check so we can route the user
+  // through the gate and execute the join immediately after.
+  const sp = new URLSearchParams(location.search);
+  const joinCode = sp.get("join");
+  if (joinCode) pendingJoinCode = joinCode;
+
   try {
     const t = getSession();
-    const r = await fetch("/api/auth/me", {
-      headers: t ? { "Authorization": "Bearer " + t } : {}
-    });
+    const r = await fetch("/api/auth/me", { headers: t ? { "Authorization": "Bearer " + t } : {} });
     const data = await r.json().catch(() => ({}));
     authConfig = data.config || authConfig;
-
-    if (r.status === 410 || data.needsBootstrap) {
-      showAuthGate("bootstrap");
-      return;
-    }
+    if (r.status === 410 || data.needsBootstrap) { showAuthGate("bootstrap"); return; }
     if (r.status === 200 && data.user) {
       currentUser = data.user;
       renderUserIndicator();
       hideAuthGate();
-      bootDashboard();
+      await bootDashboard();
       return;
     }
-    // 401 or other → show login
     clearSession();
     showAuthGate("signin");
   } catch (e) {

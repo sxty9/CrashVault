@@ -33,6 +33,9 @@ module.exports = async (req, res) => {
     if (!user) {
       return gh.sendJson(res, 401, { error: "Not signed in", config });
     }
+    // Augment with GitHub-linkage from user settings so the header avatar
+    // and commit-attribution UI have what they need without an extra call.
+    await auth.loadUserContext(user);
     return gh.sendJson(res, 200, { user: auth.publicUser(user), config });
   } catch (e) {
     return gh.sendError(res, e);
