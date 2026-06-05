@@ -412,6 +412,11 @@ function showAuthGate(mode) {
   tabs.querySelector("[data-tab='signin']").style.display     = isBootstrap ? "none" : "";
   tabs.querySelector("[data-tab='signup']").style.display     = (!isBootstrap && authConfig.allowSignup) ? "" : "none";
   tabs.querySelector("[data-tab='bootstrap']").style.display  = isBootstrap ? "" : "none";
+  // Hide the entire tab strip when there's only one visible tab — a single-
+  // tab strip looks like a redundant clone of the submit button below.
+  const visibleTabs = Array.from(tabs.querySelectorAll("button[data-tab]"))
+    .filter(b => b.style.display !== "none").length;
+  tabs.style.display = visibleTabs > 1 ? "" : "none";
   setAuthMode(mode);
   setTimeout(() => authForm.elements.username.focus(), 0);
 }
