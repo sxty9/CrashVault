@@ -8,6 +8,38 @@
 </head>
 <body>
 
+<div id="authGate">
+  <div class="auth-card">
+    <h1><span class="accent">⚡</span> CrashVault</h1>
+    <p class="auth-sub" id="authSub">Anmelden um fortzufahren</p>
+    <div class="auth-tabs" id="authTabs">
+      <button type="button" data-tab="signin" class="active">Anmelden</button>
+      <button type="button" data-tab="signup" style="display:none">Registrieren</button>
+      <button type="button" data-tab="bootstrap" style="display:none">Repo initialisieren</button>
+    </div>
+    <form id="authForm" autocomplete="on">
+      <div class="auth-field" data-field="username">
+        <label>Account-Name</label>
+        <input type="text" name="username" autocomplete="username" required>
+      </div>
+      <div class="auth-field" data-field="displayName" style="display:none">
+        <label>Nickname (Anzeigename)</label>
+        <input type="text" name="displayName" autocomplete="nickname">
+      </div>
+      <div class="auth-field" data-field="password">
+        <label>Passwort</label>
+        <input type="password" name="password" autocomplete="current-password" required>
+      </div>
+      <div class="auth-field" data-field="passwordConfirm" style="display:none">
+        <label>Passwort bestätigen</label>
+        <input type="password" name="passwordConfirm" autocomplete="new-password">
+      </div>
+      <button type="submit" class="primary" id="authSubmit">Anmelden</button>
+    </form>
+    <div class="auth-msg" id="authMsg"></div>
+  </div>
+</div>
+
 <header>
   <h1><span class="accent">⚡</span> CrashVault</h1>
   <div class="toolbar">
@@ -16,6 +48,15 @@
     <button class="ghost small" id="btnReload" title="Neu laden">↻</button>
     <button class="ghost small" id="btnDiscard" style="display:none">Verwerfen</button>
     <button class="primary save-btn" id="btnSave"><span class="dot"></span><span id="saveLabel">Gespeichert</span></button>
+    <span class="user-indicator" id="userIndicator" style="display:none">
+      <div class="user-avatar" id="userAvatar" title="Konto"></div>
+      <div class="user-menu" id="userMenu">
+        <div class="uhead"><b id="umName">…</b><span id="umHandle">…</span></div>
+        <hr>
+        <button data-act="settings">Einstellungen</button>
+        <button data-act="logout">Abmelden</button>
+      </div>
+    </span>
   </div>
 </header>
 
@@ -73,7 +114,9 @@
 <script>
 "use strict";
 
-const { $, uid, escapeText, escapeAttr, slugify, toast, loading, api, apiPostJson, getFeatureState, saveFeatureState } = window.CV;
+const { $, uid, escapeText, escapeAttr, slugify, toast, loading, api, apiPostJson, getFeatureState, saveFeatureState, getSession, setSession, clearSession } = window.CV;
+let currentUser = null;
+let authConfig = { allowSignup: false };
 
 const LOCAL_CACHE_KEY = "crashvault-registry-cache";
 const COLORS = ["#38bdf8", "#a78bfa", "#4ade80", "#fbbf24", "#f87171", "#f472b6", "#22d3ee", "#fb923c"];
@@ -322,10 +365,170 @@ window.addEventListener("keydown", e => {
 });
 
 // ============================================================
-// Init
+// Auth-Gate
 // ============================================================
-(async function init() {
-  // Quick first paint from cache
+const authForm = $("#authForm");
+const authGate = $("#authGate");
+const authSub  = $("#authSub");
+const authMsg  = $("#authMsg");
+const authSubmit = $("#authSubmit");
+
+let currentMode = "signin";
+
+function setAuthMsg(text, kind) {
+  if (!text) { authMsg.className = "auth-msg"; authMsg.textContent = ""; return; }
+  authMsg.className = "auth-msg show " + (kind || "");
+  authMsg.textContent = text;
+}
+
+function setAuthMode(mode) {
+  currentMode = mode;
+  for (const btn of $("#authTabs").querySelectorAll("button")) {
+    btn.classList.toggle("active", btn.dataset.tab === mode);
+  }
+  const showSignupFields = (mode === "signup" || mode === "bootstrap");
+  authForm.querySelector("[data-field='displayName']").style.display = showSignupFields ? "" : "none";
+  authForm.querySelector("[data-field='passwordConfirm']").style.display = showSignupFields ? "" : "none";
+  authForm.elements.password.setAttribute("autocomplete", showSignupFields ? "new-password" : "current-password");
+  if (mode === "bootstrap") {
+    authSub.textContent = "Erster Account → wird automatisch Admin";
+    authSubmit.textContent = "Repo initialisieren";
+  } else if (mode === "signup") {
+    authSub.textContent = "Neuen Account anlegen";
+    authSubmit.textContent = "Registrieren";
+  } else {
+    authSub.textContent = "Anmelden um fortzufahren";
+    authSubmit.textContent = "Anmelden";
+  }
+  setAuthMsg(null);
+}
+
+function showAuthGate(mode) {
+  document.body.classList.remove("authed");
+  authGate.classList.add("show");
+  // Show/hide tabs based on what's allowed
+  const tabs = $("#authTabs");
+  const isBootstrap = mode === "bootstrap";
+  tabs.querySelector("[data-tab='signin']").style.display     = isBootstrap ? "none" : "";
+  tabs.querySelector("[data-tab='signup']").style.display     = (!isBootstrap && authConfig.allowSignup) ? "" : "none";
+  tabs.querySelector("[data-tab='bootstrap']").style.display  = isBootstrap ? "" : "none";
+  setAuthMode(mode);
+  setTimeout(() => authForm.elements.username.focus(), 0);
+}
+
+function hideAuthGate() {
+  authGate.classList.remove("show");
+  document.body.classList.add("authed");
+}
+
+$("#authTabs").addEventListener("click", e => {
+  const tab = e.target.closest("button[data-tab]");
+  if (!tab) return;
+  setAuthMode(tab.dataset.tab);
+});
+
+authForm.addEventListener("submit", async e => {
+  e.preventDefault();
+  const fd = new FormData(authForm);
+  const username = (fd.get("username") || "").toString().trim().toLowerCase();
+  const password = (fd.get("password") || "").toString();
+  const displayName = (fd.get("displayName") || "").toString().trim();
+  const confirm = (fd.get("passwordConfirm") || "").toString();
+
+  if (currentMode === "signup" || currentMode === "bootstrap") {
+    if (password !== confirm) { setAuthMsg("Passwörter stimmen nicht überein", "err"); return; }
+    if (password.length < 8)  { setAuthMsg("Passwort muss mindestens 8 Zeichen lang sein", "err"); return; }
+  }
+
+  authSubmit.disabled = true;
+  const origText = authSubmit.textContent;
+  authSubmit.textContent = "…";
+  try {
+    const path = currentMode === "signin" ? "/api/auth/login" : "/api/auth/signup";
+    const body = currentMode === "signin"
+      ? { username, password }
+      : { username, password, displayName };
+    const r = await fetch(path, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (r.status === 410 && data.needsBootstrap) {
+        setAuthMsg("Repo ist leer — bitte ersten Account anlegen.", "info");
+        authConfig = data.config || authConfig;
+        showAuthGate("bootstrap");
+        return;
+      }
+      setAuthMsg(data.error || `Fehler ${r.status}`, "err");
+      return;
+    }
+    setSession(data.token);
+    currentUser = data.user;
+    hideAuthGate();
+    renderUserIndicator();
+    bootDashboard();
+  } catch (err) {
+    setAuthMsg("Netzwerkfehler: " + err.message, "err");
+  } finally {
+    authSubmit.disabled = false;
+    authSubmit.textContent = origText;
+  }
+});
+
+// ============================================================
+// User indicator
+// ============================================================
+function renderUserIndicator() {
+  const ind = $("#userIndicator");
+  if (!currentUser) { ind.style.display = "none"; return; }
+  ind.style.display = "";
+  const av = $("#userAvatar");
+  const ghAvatar = currentUser.github && currentUser.github.avatarUrl;
+  av.innerHTML = "";
+  if (ghAvatar) {
+    const img = document.createElement("img");
+    img.src = ghAvatar; img.alt = currentUser.displayName || currentUser.username;
+    av.appendChild(img);
+  } else {
+    const name = (currentUser.displayName || currentUser.username || "?").trim();
+    av.textContent = name.charAt(0).toUpperCase();
+  }
+  av.title = (currentUser.displayName || currentUser.username) + " — Konto";
+  $("#umName").textContent = currentUser.displayName || currentUser.username;
+  $("#umHandle").textContent = "@" + currentUser.username + (currentUser.role === "admin" ? " · admin" : "");
+}
+
+$("#userAvatar").addEventListener("click", e => {
+  e.stopPropagation();
+  $("#userMenu").classList.toggle("show");
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest(".user-indicator")) $("#userMenu").classList.remove("show");
+});
+$("#userMenu").addEventListener("click", async e => {
+  const act = e.target.closest("button[data-act]")?.dataset.act;
+  if (!act) return;
+  $("#userMenu").classList.remove("show");
+  if (act === "settings") { renderFeatureList(); $("#settingsDlg").showModal(); }
+  if (act === "logout") {
+    clearSession(); currentUser = null;
+    renderUserIndicator();
+    showAuthGate("signin");
+  }
+});
+
+window.addEventListener("crashvault:auth-expired", () => {
+  currentUser = null;
+  renderUserIndicator();
+  toast("Sitzung abgelaufen — bitte neu anmelden", "warn");
+  showAuthGate("signin");
+});
+
+// ============================================================
+// Dashboard bootstrap (only runs once auth is OK)
+// ============================================================
+async function bootDashboard() {
   try {
     const cached = JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY) || "null");
     if (cached?.registry?.modules) { registry = cached.registry; render(); }
@@ -339,9 +542,40 @@ window.addEventListener("keydown", e => {
   } catch (e) {
     console.error(e);
     toast("Server nicht erreichbar: " + e.message, "err");
-    // Render whatever we had from cache; if nothing, show empty state
     render();
   } finally { loading(null); }
+}
+
+// ============================================================
+// Init — figure out auth state, then either gate or boot
+// ============================================================
+(async function init() {
+  try {
+    const t = getSession();
+    const r = await fetch("/api/auth/me", {
+      headers: t ? { "Authorization": "Bearer " + t } : {}
+    });
+    const data = await r.json().catch(() => ({}));
+    authConfig = data.config || authConfig;
+
+    if (r.status === 410 || data.needsBootstrap) {
+      showAuthGate("bootstrap");
+      return;
+    }
+    if (r.status === 200 && data.user) {
+      currentUser = data.user;
+      renderUserIndicator();
+      hideAuthGate();
+      bootDashboard();
+      return;
+    }
+    // 401 or other → show login
+    clearSession();
+    showAuthGate("signin");
+  } catch (e) {
+    console.error("Auth check failed:", e);
+    showAuthGate("signin");
+  }
 })();
 </script>
 </body>

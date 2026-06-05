@@ -6,6 +6,7 @@
 // { id, name, tiles: [...] } where every tile carries its own state subtree.
 
 const gh = require("./_github.js");
+const auth = require("./_auth.js");
 
 function pathFor(id) { return `modules/${id}/data.js`; }
 function prefixFor(id) { return `modules/${id}/`; }
@@ -28,6 +29,7 @@ function buildDataFile(state) {
 
 module.exports = async (req, res) => {
   try {
+    const me = await auth.requireAuth(req);
     const url = new URL(req.url, `http://${req.headers.host || "x"}`);
     const moduleId = url.searchParams.get("module");
     if (!gh.validModuleId(moduleId)) return gh.sendJson(res, 400, { error: "module query param invalid" });
@@ -68,9 +70,12 @@ module.exports = async (req, res) => {
 
       const tree = await gh.createTree(baseCommit.tree.sha, treeEntries);
       const message = fileShas.length
-        ? `CrashVault[${moduleId}]: data + ${fileShas.length} Anhang(e)`
-        : `CrashVault[${moduleId}]: data aktualisiert`;
-      const commit = await gh.createCommit(message, tree.sha, currentSha);
+        ? `[${me.username}] ${moduleId}: data + ${fileShas.length} Anhang(e)`
+        : `[${me.username}] ${moduleId}: data aktualisiert`;
+      const author = (me.github && me.github.commitEmail)
+        ? { name: me.github.login || me.username, email: me.github.commitEmail }
+        : null;
+      const commit = await gh.createCommit(message, tree.sha, currentSha, author);
       await gh.updateRef(commit.sha);
       return gh.sendJson(res, 200, { sha: commit.sha, changes: treeEntries.length });
     }

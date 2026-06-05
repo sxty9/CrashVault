@@ -20,6 +20,15 @@
     <button class="ghost small" id="btnReload" title="Neu laden">↻</button>
     <button class="ghost small" id="btnDiscard" style="display:none">Verwerfen</button>
     <button class="primary save-btn" id="btnSave"><span class="dot"></span><span id="saveLabel">Gespeichert</span></button>
+    <span class="user-indicator" id="userIndicator" style="display:none">
+      <div class="user-avatar" id="userAvatar" title="Konto"></div>
+      <div class="user-menu" id="userMenu">
+        <div class="uhead"><b id="umName">…</b><span id="umHandle">…</span></div>
+        <hr>
+        <button data-act="dashboard">Zum Dashboard</button>
+        <button data-act="logout">Abmelden</button>
+      </div>
+    </span>
   </div>
 </header>
 
@@ -71,7 +80,8 @@
 <script>
 "use strict";
 
-const { $, uid, escapeText, escapeAttr, toast, loading, api, apiJson, apiPostJson, autosize, getFeatureState } = window.CV;
+const { $, uid, escapeText, escapeAttr, toast, loading, api, apiJson, apiPostJson, autosize, getFeatureState, getSession, setSession, clearSession } = window.CV;
+let currentUser = null;
 
 const params = new URLSearchParams(location.search);
 const moduleId = params.get("id");
@@ -897,7 +907,78 @@ setInterval(() => {
   if (document.hasFocus()) scheduleAnkiSync();
 }, ANKI_POLL_MS);
 
+// ============================================================
+// User indicator (mirrors index.html) — module page is auth-required;
+// any 401 routes the user back to / where the login gate lives.
+// ============================================================
+function renderUserIndicator() {
+  const ind = $("#userIndicator");
+  if (!currentUser) { ind.style.display = "none"; return; }
+  ind.style.display = "";
+  const av = $("#userAvatar");
+  const ghAvatar = currentUser.github && currentUser.github.avatarUrl;
+  av.innerHTML = "";
+  if (ghAvatar) {
+    const img = document.createElement("img");
+    img.src = ghAvatar; img.alt = currentUser.displayName || currentUser.username;
+    av.appendChild(img);
+  } else {
+    const name = (currentUser.displayName || currentUser.username || "?").trim();
+    av.textContent = name.charAt(0).toUpperCase();
+  }
+  av.title = (currentUser.displayName || currentUser.username) + " — Konto";
+  $("#umName").textContent = currentUser.displayName || currentUser.username;
+  $("#umHandle").textContent = "@" + currentUser.username + (currentUser.role === "admin" ? " · admin" : "");
+}
+
+$("#userAvatar").addEventListener("click", e => {
+  e.stopPropagation();
+  $("#userMenu").classList.toggle("show");
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest(".user-indicator")) $("#userMenu").classList.remove("show");
+});
+$("#userMenu").addEventListener("click", async e => {
+  const act = e.target.closest("button[data-act]")?.dataset.act;
+  if (!act) return;
+  $("#userMenu").classList.remove("show");
+  if (act === "dashboard") {
+    if (dirty && !confirm("Ungespeicherte Änderungen verwerfen?")) return;
+    window.location.href = "/";
+  }
+  if (act === "logout") { clearSession(); window.location.href = "/"; }
+});
+
+window.addEventListener("crashvault:auth-expired", () => {
+  currentUser = null; renderUserIndicator();
+  toast("Sitzung abgelaufen — kehre zum Login zurück", "warn");
+  setTimeout(() => { window.location.href = "/"; }, 1200);
+});
+
 (async function init() {
+  // Auth gate — module pages always require sign-in. We route to / where
+  // the login screen lives if the session is missing or stale.
+  const tok = getSession();
+  if (!tok) { window.location.href = "/"; return; }
+  try {
+    const r = await fetch("/api/auth/me", { headers: { "Authorization": "Bearer " + tok } });
+    if (r.status === 200) {
+      const data = await r.json();
+      currentUser = data.user;
+      document.body.classList.add("authed");
+      renderUserIndicator();
+    } else {
+      clearSession();
+      window.location.href = "/";
+      return;
+    }
+  } catch (e) {
+    console.error("Auth check failed:", e);
+    clearSession();
+    window.location.href = "/";
+    return;
+  }
+
   refreshAnkiButton();
   // Cache-first paint
   try {

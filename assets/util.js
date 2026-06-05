@@ -43,12 +43,46 @@
     else { $("#loadingText").textContent = text; overlay.classList.add("show"); }
   }
 
+  // ============================================================
+  // Session helpers — JWT in localStorage.
+  // ------------------------------------------------------------
+  // The session token is set on login/signup and cleared on logout. All API
+  // requests through api()/apiJson()/apiPostJson() automatically attach it
+  // as a Bearer header. A 401 response means the token is no longer valid;
+  // we drop it and surface an `auth-expired` event so the page can route
+  // back to the login screen.
+  // ============================================================
+  const SESSION_KEY = "crashvault-session";
+  function getSession() {
+    try { return localStorage.getItem(SESSION_KEY) || null; }
+    catch (e) { return null; }
+  }
+  function setSession(token) {
+    try { localStorage.setItem(SESSION_KEY, token); } catch (e) {}
+  }
+  function clearSession() {
+    try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+  }
+
+  function withAuthHeaders(opts) {
+    const t = getSession();
+    if (!t) return opts;
+    const headers = Object.assign({}, (opts && opts.headers) || {}, { "Authorization": "Bearer " + t });
+    return Object.assign({}, opts || {}, { headers });
+  }
+
   async function api(path, opts) {
-    const res = await fetch(path, opts);
+    const res = await fetch(path, withAuthHeaders(opts));
     if (!res.ok) {
       let msg = `${res.status} ${res.statusText}`;
-      try { const j = await res.json(); if (j.error) msg = j.error; } catch (e) {}
-      const err = new Error(msg); err.status = res.status;
+      let body = null;
+      try { body = await res.json(); if (body && body.error) msg = body.error; } catch (e) {}
+      const err = new Error(msg); err.status = res.status; err.body = body;
+      // Drop dead sessions so the page can route back to the login screen.
+      if (res.status === 401 && getSession()) {
+        clearSession();
+        try { window.dispatchEvent(new CustomEvent("crashvault:auth-expired")); } catch (e) {}
+      }
       throw err;
     }
     return res;
@@ -165,6 +199,7 @@
     $, uid, deepClone, escapeText, escapeAttr, slugify,
     toast, loading, api, apiJson, apiPostJson,
     autosize, ankiCardKey, splitSpruch, downloadApkg,
-    getFeatureState, saveFeatureState, getAllFeatureStates
+    getFeatureState, saveFeatureState, getAllFeatureStates,
+    getSession, setSession, clearSession
   };
 })();

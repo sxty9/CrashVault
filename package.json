@@ -4,6 +4,8 @@
   "description": "Modulares Lern-Cockpit: Dashboard mit beliebig vielen Klausurmodulen, jedes mit freier Kachel-Anordnung (Themen, Sprüche, ...) und Anki-Export.",
   "dependencies": {
     "sql.js": "^1.12.0",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2"
   }
 }

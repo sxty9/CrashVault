@@ -11,6 +11,7 @@ const crypto = require("crypto");
 const initSqlJs = require("sql.js/dist/sql-asm.js");
 const JSZip = require("jszip");
 const gh = require("./_github.js");
+const auth = require("./_auth.js");
 
 let sqlPromise = null;
 function getSQL() { if (!sqlPromise) sqlPromise = initSqlJs(); return sqlPromise; }
@@ -123,6 +124,7 @@ module.exports = async (req, res) => {
       res.setHeader("Allow", "POST");
       return gh.sendJson(res, 405, { error: "Method not allowed" });
     }
+    await auth.requireAuth(req);
     const body = await gh.readJson(req);
     let allDecks;
     if (body.decks && Array.isArray(body.decks)) {

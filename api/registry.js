@@ -6,6 +6,7 @@
 // API parser can read the same file.
 
 const gh = require("./_github.js");
+const auth = require("./_auth.js");
 
 const REGISTRY_FILE = "modules/registry.js";
 const DEFAULTS = { modules: [] };
@@ -23,6 +24,8 @@ function buildRegistry(state) {
 
 module.exports = async (req, res) => {
   try {
+    const me = await auth.requireAuth(req);
+
     if (req.method === "GET") {
       const sha = await gh.getRefSha();
       const c = await gh.getContent(REGISTRY_FILE);
@@ -55,7 +58,13 @@ module.exports = async (req, res) => {
       const tree = await gh.createTree(baseCommit.tree.sha, [
         { path: REGISTRY_FILE, mode: "100644", type: "blob", sha: blob.sha }
       ]);
-      const commit = await gh.createCommit(`CrashVault: registry aktualisiert`, tree.sha, currentSha);
+      const author = (me.github && me.github.commitEmail)
+        ? { name: me.github.login || me.username, email: me.github.commitEmail }
+        : null;
+      const commit = await gh.createCommit(
+        `[${me.username}] registry aktualisiert`,
+        tree.sha, currentSha, author
+      );
       await gh.updateRef(commit.sha);
       return gh.sendJson(res, 200, { sha: commit.sha });
     }

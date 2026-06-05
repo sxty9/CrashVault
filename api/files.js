@@ -4,6 +4,7 @@
 // inside a Themenliste tile so the user can pick already-uploaded files.
 
 const gh = require("./_github.js");
+const auth = require("./_auth.js");
 
 module.exports = async (req, res) => {
   try {
@@ -11,6 +12,7 @@ module.exports = async (req, res) => {
       res.setHeader("Allow", "GET");
       return gh.sendJson(res, 405, { error: "Method not allowed" });
     }
+    await auth.requireAuth(req);
     const url = new URL(req.url, `http://${req.headers.host || "x"}`);
     const moduleId = url.searchParams.get("module");
     if (!gh.validModuleId(moduleId)) return gh.sendJson(res, 400, { error: "module query param invalid" });

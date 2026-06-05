@@ -106,8 +106,16 @@ git push -u origin main
    - `GITHUB_OWNER` — dein GitHub-Username (oder Org-Name).
    - `GITHUB_REPO` — `CrashVault`.
    - `GITHUB_BRANCH` — `main`.
-4. Deploy. Die App ist unter der Vercel-URL erreichbar; das Dashboard zeigt
-   sofort das migrierte BWL-Modul.
+   - `JWT_SECRET` — mindestens 32 Zeichen Zufall. Erzeugen z.B. mit
+     `openssl rand -hex 32` lokal, dann den Hex-String in Vercel als Env-Var
+     eintragen. Wichtig: wenn du diesen änderst, fliegen alle bestehenden
+     User-Sessions raus (alle müssen sich neu anmelden) — also einmalig
+     setzen und nicht rotieren ohne Grund.
+4. Deploy. Beim ersten Aufruf der App siehst du den „Repo initialisieren"-
+   Tab: trag dort Username + Passwort ein, der erste Account wird
+   automatisch zum Admin. Ab da: Login-Screen für alle weiteren User
+   (Sign-up ist per Default deaktiviert und kann im Admin-Settings-Tab
+   freigeschaltet werden).
 
 ### 3. BWL-Migration
 

@@ -473,6 +473,103 @@ dialog h3 { margin: 0 0 12px; font-size: 16px; }
 .fcfg-test-result.ok  { background: rgba(74, 222, 128, .08); color: var(--ok); border: 1px solid #1f4732; }
 .fcfg-test-result.err { background: rgba(248, 113, 113, .08); color: var(--danger); border: 1px solid #553030; }
 
+/* ============================================================
+   Auth gate — login / signup / bootstrap
+   ============================================================ */
+#authGate {
+  position: fixed; inset: 0; z-index: 400;
+  display: none;
+  align-items: center; justify-content: center;
+  background: var(--bg);
+  padding: 24px;
+}
+#authGate.show { display: flex; }
+body.authed > header,
+body.authed > main,
+body.authed > .canvas-wrap,
+body.authed > .add-tile-fab { /* visible when authed */ }
+body:not(.authed):not(.bootless) > header,
+body:not(.authed):not(.bootless) > main,
+body:not(.authed):not(.bootless) > .canvas-wrap,
+body:not(.authed):not(.bootless) > .add-tile-fab { visibility: hidden; }
+.auth-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 32px 30px 26px;
+  width: 100%; max-width: 420px;
+}
+.auth-card h1 {
+  margin: 0 0 4px; font-size: 22px; letter-spacing: .2px;
+}
+.auth-card h1 .accent { color: var(--accent); }
+.auth-card .auth-sub {
+  margin: 0 0 22px; color: var(--muted); font-size: 13px;
+}
+.auth-tabs {
+  display: flex; gap: 4px; margin-bottom: 18px;
+  background: var(--panel-2); padding: 4px; border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.auth-tabs button {
+  flex: 1; background: transparent; border: none;
+  padding: 7px 10px; font-size: 12px; border-radius: 6px;
+  color: var(--muted);
+}
+.auth-tabs button:hover { color: var(--text); background: var(--border); }
+.auth-tabs button.active { background: var(--panel); color: var(--text); }
+.auth-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+.auth-field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+.auth-field input { width: 100%; }
+#authSubmit { width: 100%; padding: 10px; margin-top: 6px; }
+.auth-msg {
+  margin-top: 12px; font-size: 12px; min-height: 16px;
+  padding: 8px 10px; border-radius: 6px;
+  display: none;
+}
+.auth-msg.show { display: block; }
+.auth-msg.err { background: rgba(248,113,113,.08); color: var(--danger); border: 1px solid #553030; }
+.auth-msg.ok  { background: rgba(74,222,128,.08); color: var(--ok);     border: 1px solid #1f4732; }
+.auth-msg.info{ background: rgba(56,189,248,.08); color: var(--accent); border: 1px solid #1d4965; }
+
+/* ============================================================
+   Header user indicator
+   ============================================================ */
+.user-indicator {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 8px;
+  margin-left: 8px;
+}
+.user-avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--accent); color: #0f172a;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700;
+  cursor: pointer; user-select: none;
+  border: 2px solid transparent; transition: border-color .15s;
+}
+.user-avatar:hover { border-color: var(--accent); }
+.user-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.user-menu {
+  position: absolute; top: 36px; right: 0;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: var(--shadow);
+  min-width: 200px; padding: 6px;
+  display: none; z-index: 50;
+}
+.user-menu.show { display: block; }
+.user-menu .uhead { padding: 8px 10px 4px; font-size: 11px; color: var(--muted); }
+.user-menu .uhead b { color: var(--text); font-size: 13px; display: block; }
+.user-menu button {
+  width: 100%; text-align: left;
+  background: transparent; border: none;
+  padding: 8px 10px; border-radius: 6px;
+  font-size: 13px; color: var(--text);
+}
+.user-menu button:hover { background: var(--panel-2); }
+.user-menu hr { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+
 /* Header indicator chip for an active feature */
 .feature-indicator {
   display: inline-flex; align-items: center; gap: 6px;

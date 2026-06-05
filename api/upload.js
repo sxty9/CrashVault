@@ -7,6 +7,7 @@
 // reserved files like data.js/registry.js.
 
 const gh = require("./_github.js");
+const auth = require("./_auth.js");
 
 function validUploadPath(path) {
   if (!path || typeof path !== "string") return false;
@@ -21,6 +22,7 @@ module.exports = async (req, res) => {
       res.setHeader("Allow", "POST");
       return gh.sendJson(res, 405, { error: "Method not allowed" });
     }
+    await auth.requireAuth(req);
 
     const contentType = req.headers["content-type"] || "";
 
