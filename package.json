@@ -2,6 +2,14 @@
   "name": "crashvault",
   "private": true,
   "description": "Modulares Lern-Cockpit: Dashboard mit beliebig vielen Klausurmodulen, jedes mit freier Kachel-Anordnung (Themen, Sprüche, ...) und Anki-Export.",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
   "dependencies": {
     "sql.js": "^1.12.0",
     "jszip": "^3.10.1",

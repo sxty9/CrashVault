@@ -1,0 +1,47 @@
+name: Deploy CrashVault
+
+# Self-hosted-runner deploy. The runner lives ON the Ubuntu server and polls
+# GitHub outbound, so this works behind CGNAT / the Cloudflare tunnel with no
+# inbound port. On every push to main the runner pulls the latest code into
+# the persistent deployment clone and restarts the systemd service.
+#
+# Prerequisites on the server (one-time, see docs/SELFHOST.md):
+#   - A self-hosted Actions runner registered to this repo, running as the
+#     same Linux user that owns the deployment clone.
+#   - The deployment clone at the path in the DEPLOY_DIR repo variable
+#     (Settings → Secrets and variables → Actions → Variables).
+#   - Passwordless sudo for exactly: systemctl restart crashvault
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}   # allow manual "Run workflow" from the Actions tab
+
+# Never run two deploys at once; cancel an in-flight one if a newer push lands.
+concurrency:
+  group: crashvault-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Pull latest + restart service
+        env:
+          # Falls back to the conventional path if the repo variable is unset.
+          DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+          PORT: ${{ vars.APP_PORT }}
+        run: |
+          set -euo pipefail
+          DIR="${DEPLOY_DIR:-$HOME/Code/CrashVault}"
+          APP_PORT="${PORT:-8080}"
+          echo "Deploying into $DIR"
+          cd "$DIR"
+          git fetch --all --prune
+          git reset --hard origin/main
+          npm ci --omit=dev
+          sudo systemctl restart crashvault
+          # Give the process a moment, then smoke-test that it serves.
+          sleep 2
+          curl -fsS "http://127.0.0.1:${APP_PORT}/" -o /dev/null
+          echo "Deploy OK — service is serving on 127.0.0.1:${APP_PORT}"

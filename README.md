@@ -7,9 +7,10 @@ Modulares Lern-Cockpit für Klausurvorbereitung.
 - **Kachel-Klassen** (beliebig oft pro Modul instanziierbar):
   - **Themenliste** — Klausurthemen mit Quellenangabe, Notizen, Dateianhängen und Anki-Karteikarten je Thema
   - **Sprücheliste** — Merksätze / „Ludolph-Sprüche" mit Anki-Export (Front/Back-Split)
-- **Storage** = direkt im GitHub-Repo (`modules/<id>/data.js` + `modules/<id>/files/…`)
-- **Hosting** = Vercel-Serverless-Functions (`/api/*`)
-- **Anki .apkg**-Export pro Topic, pro Tile oder gesamtes Modul
+- **Accounts + Vaults** — Login (JWT/bcrypt), beliebig viele teilbare Vaults pro User (User → Vault → Modul → Tile)
+- **Storage** = direkt im GitHub-Repo (`vaults/<vid>/modules/<mid>/data.js` + `…/files/…`)
+- **Hosting** = einzelner Node-Prozess (`server.js`), self-hosted hinter Cloudflare Tunnel
+- **Anki .apkg**-Export + bidirektionaler AnkiConnect-Sync
 
 ## Architektur
 
@@ -95,27 +96,30 @@ git branch -M main
 git push -u origin main
 ```
 
-### 2. Vercel-Projekt verknüpfen
+### 2. Hosting
 
-1. https://vercel.com/new → wähle das frisch gepushte CrashVault-Repo.
-2. Framework Preset: **Other**. Build/Output-Settings unverändert lassen.
-3. **Environment Variables** anlegen:
-   - `GITHUB_TOKEN` — Personal Access Token mit `repo`-Scope (am besten ein
-     fine-grained Token, nur Zugriff auf das CrashVault-Repo, Permissions:
-     Contents = Read+Write).
-   - `GITHUB_OWNER` — dein GitHub-Username (oder Org-Name).
-   - `GITHUB_REPO` — `CrashVault`.
-   - `GITHUB_BRANCH` — `main`.
-   - `JWT_SECRET` — mindestens 32 Zeichen Zufall. Erzeugen z.B. mit
-     `openssl rand -hex 32` lokal, dann den Hex-String in Vercel als Env-Var
-     eintragen. Wichtig: wenn du diesen änderst, fliegen alle bestehenden
-     User-Sessions raus (alle müssen sich neu anmelden) — also einmalig
-     setzen und nicht rotieren ohne Grund.
-4. Deploy. Beim ersten Aufruf der App siehst du den „Repo initialisieren"-
-   Tab: trag dort Username + Passwort ein, der erste Account wird
-   automatisch zum Admin. Ab da: Login-Screen für alle weiteren User
-   (Sign-up ist per Default deaktiviert und kann im Admin-Settings-Tab
-   freigeschaltet werden).
+CrashVault läuft als **einzelner Node-Prozess** (`server.js`) — kein Vercel,
+keine Serverless-Functions mehr. Frontend + `/api/*`-Handler werden aus
+demselben Prozess bedient.
+
+**Produktiv** wird auf einem eigenen Ubuntu-Server gehostet, erreichbar via
+Cloudflare Tunnel unter `crashvault.henrysoase.org`. Die komplette
+Server-Anleitung (Node, systemd, Tunnel, Auto-Deploy via self-hosted
+GitHub-Runner) steht in **[docs/SELFHOST.md](docs/SELFHOST.md)**.
+
+**Environment-Variablen** (im `.env`, Vorlage `.env.example`):
+
+- `GITHUB_TOKEN` — Personal Access Token, Contents = Read+Write auf das Repo.
+- `GITHUB_OWNER` — `sxty9`.
+- `GITHUB_REPO` — `CrashVault`.
+- `GITHUB_BRANCH` — `main`.
+- `JWT_SECRET` — mind. 32 Zeichen Zufall (`openssl rand -hex 32`). Ändern =
+  alle Sessions raus.
+- `PORT` — `8080` (nur an `127.0.0.1` gebunden; cloudflared proxied davor).
+
+Beim ersten Aufruf der App siehst du den „Repo initialisieren"-Tab: erster
+Account wird automatisch Admin. Danach: Login-Screen + optionaler Sign-Up
+(Admin schaltet `allowSignup` frei).
 
 ### 3. BWL-Migration
 
@@ -138,12 +142,15 @@ Das Skript
 ## Lokal entwickeln
 
 ```bash
-npm i -g vercel
-vercel dev
+cp .env.example .env   # ausfüllen (GITHUB_TOKEN, JWT_SECRET, …)
+npm ci
+npm start              # = node server.js → http://127.0.0.1:8080
 ```
 
-Vercel-CLI startet einen lokalen Server mit Serverless-Functions. Vorher in
-`.env` (oder via `vercel env pull`) die o.g. `GITHUB_*`-Variablen setzen.
+Ein einziger Node-Prozess, kein Build-Step, kein Vercel-CLI. Änderungen an
+`.js`/`.html` greifen nach Neustart (`Strg+C` + `npm start`); Frontend-Edits
+sieht man nach Browser-Reload, da `server.js` Dateien bei jedem Request frisch
+liest und HTML mit `Cache-Control: no-cache` ausliefert.
 
 ## Was bewusst NICHT portiert wurde (gegenüber der BWL-App)
 
