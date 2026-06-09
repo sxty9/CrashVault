@@ -115,7 +115,9 @@ GitHub-Runner) steht in **[docs/SELFHOST.md](docs/SELFHOST.md)**.
 - `GITHUB_BRANCH` — `main`.
 - `JWT_SECRET` — mind. 32 Zeichen Zufall (`openssl rand -hex 32`). Ändern =
   alle Sessions raus.
-- `PORT` — `8080` (nur an `127.0.0.1` gebunden; cloudflared proxied davor).
+- `PORT` — `29927` (`crc32("CrashVault") % 39151 + 10000`; nur an `127.0.0.1`
+  gebunden, cloudflared proxied davor. 8080 ist für die spätere Hauptseite auf
+  der Apex-Domain reserviert).
 
 Beim ersten Aufruf der App siehst du den „Repo initialisieren"-Tab: erster
 Account wird automatisch Admin. Danach: Login-Screen + optionaler Sign-Up
@@ -144,7 +146,7 @@ Das Skript
 ```bash
 cp .env.example .env   # ausfüllen (GITHUB_TOKEN, JWT_SECRET, …)
 npm ci
-npm start              # = node server.js → http://127.0.0.1:8080
+npm start              # = node server.js → http://127.0.0.1:29927
 ```
 
 Ein einziger Node-Prozess, kein Build-Step, kein Vercel-CLI. Änderungen an

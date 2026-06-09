@@ -43,7 +43,10 @@ function loadDotEnv() {
 }
 loadDotEnv();
 
-const PORT = parseInt(process.env.PORT || "8080", 10);
+// Default port 29927 = crc32("CrashVault") % 39151 + 10000. Deterministic,
+// quiet mid-range, and deliberately NOT 8080 (reserved for the future main
+// site on the apex domain). Override via PORT in .env.
+const PORT = parseInt(process.env.PORT || "29927", 10);
 const HOST = process.env.HOST || "127.0.0.1";
 
 // ============================================================

@@ -7,7 +7,7 @@ Architektur:
 
 ```
 Browser ──HTTPS──▶ Cloudflare-Edge ──Tunnel──▶ cloudflared ──HTTP──▶ node server.js
-   crashvault.henrysoase.org                    (127.0.0.1:8080)
+   crashvault.henrysoase.org                    (127.0.0.1:29927)
 ```
 
 CrashVault selbst ist ein einzelner Node-Prozess (`server.js`), der die
@@ -69,17 +69,17 @@ Fülle aus:
 | `GITHUB_REPO` | `CrashVault` |
 | `GITHUB_BRANCH` | `main` |
 | `JWT_SECRET` | **exakt** der Vercel-Wert |
-| `PORT` | `8080` |
+| `PORT` | `29927` |
 
 Test direkt:
 
 ```bash
 node server.js
-# → "CrashVault listening on http://127.0.0.1:8080"
+# → "CrashVault listening on http://127.0.0.1:29927"
 # → "Registered 20 API endpoints"
 # In zweitem Terminal:
-curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/        # 200
-curl -s http://127.0.0.1:8080/api/auth/me                              # 200/401/410 JSON
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:29927/        # 200
+curl -s http://127.0.0.1:29927/api/auth/me                              # 200/401/410 JSON
 # Strg+C zum Beenden.
 ```
 
@@ -87,7 +87,7 @@ curl -s http://127.0.0.1:8080/api/auth/me                              # 200/401
 
 ## 4. systemd-Service
 
-`/etc/systemd/system/crashvault.service` (ersetze `<user>`):
+`/etc/systemd/system/crashvault.service` (ersetze `nanu`):
 
 ```ini
 [Unit]
@@ -96,9 +96,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=<user>
-WorkingDirectory=/home/<user>/Code/CrashVault
-EnvironmentFile=/home/<user>/Code/CrashVault/.env
+User=nanu
+WorkingDirectory=/home/nanu/Code/CrashVault
+EnvironmentFile=/home/nanu/Code/CrashVault/.env
 ExecStart=/usr/bin/node server.js
 Restart=on-failure
 RestartSec=5
@@ -128,7 +128,7 @@ Catch-all ergänzen:
 ```yaml
 ingress:
   - hostname: crashvault.henrysoase.org
-    service: http://localhost:8080
+    service: http://localhost:29927
   # ... ggf. weitere Hosts ...
   - service: http_status:404
 ```
@@ -166,7 +166,7 @@ tar xzf actions-runner-linux-x64.tar.gz
 Als Dienst installieren (läuft als dein User, startet bei Boot):
 
 ```bash
-sudo ./svc.sh install <user>
+sudo ./svc.sh install nanu
 sudo ./svc.sh start
 sudo ./svc.sh status
 ```
@@ -176,7 +176,7 @@ sudo ./svc.sh status
 `/etc/sudoers.d/crashvault` (via `sudo visudo -f /etc/sudoers.d/crashvault`):
 
 ```
-<user> ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart crashvault
+nanu ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart crashvault
 ```
 
 (Pfad prüfen: `which systemctl` — meist `/usr/bin/systemctl`.)
@@ -187,8 +187,8 @@ GitHub → Repo → Settings → Secrets and variables → Actions → **Variabl
 
 | Variable | Wert |
 |---|---|
-| `DEPLOY_DIR` | `/home/<user>/Code/CrashVault` |
-| `APP_PORT` | `8080` |
+| `DEPLOY_DIR` | `/home/nanu/Code/CrashVault` |
+| `APP_PORT` | `29927` |
 
 Der Workflow `.github/workflows/deploy.yml` nutzt diese. Keine SSH-Secrets
 nötig — der Runner läuft ja lokal.

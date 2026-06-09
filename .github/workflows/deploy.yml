@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           DIR="${DEPLOY_DIR:-$HOME/Code/CrashVault}"
-          APP_PORT="${PORT:-8080}"
+          APP_PORT="${PORT:-29927}"
           echo "Deploying into $DIR"
           cd "$DIR"
           git fetch --all --prune
