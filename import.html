@@ -6,31 +6,60 @@
 <title>CrashVault — Material-Import</title>
 <link rel="stylesheet" href="/assets/style.css">
 <style>
-  main.import { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  /* Uses the shared dark design tokens from style.css. */
+  main.import { padding: 28px 22px; max-width: 1200px; margin: 0 auto; }
+  main.import .intro { color: var(--muted); font-size: 13px; margin: 0 0 18px; line-height: 1.5; }
+  main.import .intro b { color: var(--text); }
+
   .dropzone {
-    border: 2px dashed var(--line, #cbd5e1); border-radius: 14px; padding: 34px 20px;
-    text-align: center; color: var(--muted, #64748b); cursor: pointer; transition: .15s;
-    background: var(--paper-2, rgba(148,163,184,.06));
+    border: 2px dashed var(--border); border-radius: var(--radius);
+    padding: 40px 20px; text-align: center; color: var(--muted);
+    cursor: pointer; background: var(--panel); transition: border-color .15s, background .15s, color .15s;
   }
-  .dropzone.drag { border-color: #38bdf8; background: rgba(56,189,248,.08); color: #0f172a; }
-  .dropzone b { color: var(--ink, #0f172a); }
-  table.queue { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 13px; }
-  table.queue th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
-    color: var(--muted, #64748b); padding: 6px 8px; border-bottom: 1px solid var(--line, #e2e8f0); }
-  table.queue td { padding: 7px 8px; border-bottom: 1px solid var(--line, #eef2f7); vertical-align: middle; }
-  table.queue tr.done td { opacity: .55; }
-  table.queue select, table.queue input[type=text] { width: 100%; box-sizing: border-box; padding: 5px 7px; font-size: 13px; }
-  .fname { font-weight: 600; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .fmeta { font-size: 11px; color: var(--muted, #64748b); }
-  .conf { display: inline-block; min-width: 42px; text-align: center; padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; }
-  .conf.hi { background: #dcfce7; color: #166534; } .conf.mid { background: #fef9c3; color: #854d0e; } .conf.lo { background: #fee2e2; color: #991b1b; }
-  .why { cursor: help; color: var(--muted, #64748b); }
-  .rowstatus { font-size: 12px; color: var(--muted, #64748b); }
-  .rowstatus.err { color: var(--danger, #dc2626); }
-  .newmod { margin-top: 4px; }
-  .commitbar { position: sticky; bottom: 0; margin-top: 18px; padding: 12px 4px; display: flex; align-items: center; gap: 14px;
-    background: linear-gradient(transparent, var(--paper, #fff) 30%); }
-  .commitbar .sum { color: var(--muted, #64748b); font-size: 13px; }
+  .dropzone:hover, .dropzone.drag { border-color: var(--accent); background: var(--panel-2); color: var(--text); }
+  .dropzone .dz-emoji { font-size: 32px; line-height: 1; margin-bottom: 8px; }
+  .dropzone b { color: var(--text); }
+  .dropzone .dz-hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  table.queue { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }
+  table.queue th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+    color: var(--muted); padding: 8px; border-bottom: 1px solid var(--border); font-weight: 600;
+  }
+  table.queue td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.queue tr.done td { opacity: .6; }
+  table.queue select {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 7px; font-size: 13px;
+    font-family: inherit; outline: none; color-scheme: dark;
+  }
+  table.queue select:focus { border-color: var(--accent); }
+  table.queue input[type=text] { width: 100%; }
+  table.queue input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); margin-top: 2px; }
+
+  .fname { font-weight: 600; color: var(--text); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fmeta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .fmeta.reason { color: var(--warn); margin-top: 4px; max-width: 240px; white-space: normal; line-height: 1.4; }
+  .conf { display: inline-block; min-width: 40px; text-align: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .conf.hi  { background: rgba(74,222,128,.14);  color: var(--ok); }
+  .conf.mid { background: rgba(251,191,36,.14);  color: var(--warn); }
+  .conf.lo  { background: rgba(248,113,113,.14); color: var(--danger); }
+  .why { cursor: help; color: var(--muted); margin-left: 6px; }
+  .rowstatus { font-size: 12px; color: var(--muted); }
+  .rowstatus.err { color: var(--danger); }
+  .retry { margin-left: 8px; }
+  .newmod { margin-top: 5px; }
+  .donecell { color: var(--muted); font-size: 12px; padding-top: 9px; }
+  .donecell b { color: var(--text); }
+
+  .commitbar {
+    position: sticky; bottom: 0; margin-top: 20px; padding: 14px 4px;
+    display: flex; align-items: center; gap: 14px;
+    background: linear-gradient(transparent, var(--bg) 35%);
+  }
+  .commitbar .sum { color: var(--muted); font-size: 13px; }
+  .commitbar .back { margin-left: auto; font-size: 13px; color: var(--muted); text-decoration: none; }
+  .commitbar .back:hover { color: var(--text); }
 </style>
 </head>
 <body>
@@ -39,7 +68,7 @@
   <div class="crumbs">
     <a href="/">⚡ CrashVault</a>
     <span class="sep">›</span>
-    <a id="crumbVault" href="#">…</a>
+    <a id="crumbVault" href="#">Vault</a>
     <span class="sep">›</span>
     <span class="here">Material-Import</span>
   </div>
@@ -49,20 +78,21 @@
 </header>
 
 <main class="import">
-  <p class="intro">Lade Vorlesungsmaterial (PDF, Folien, Docs, Bilder) hoch. Claude analysiert jede Datei,
-  schlägt <b>Modul</b> und <b>Kategorie</b> vor — du prüfst, korrigierst und übernimmst. Hohe Trefferquote ist vorausgewählt.</p>
+  <p class="intro">Lade Vorlesungsmaterial (PDF, Folien, Docs, Bilder) hoch. Claude analysiert jede Datei und
+  schlägt <b>Modul</b> und <b>Kategorie</b> vor — du prüfst, korrigierst und übernimmst.
+  Hohe Treffer sind vorausgewählt; Unsicheres ist offen zum Prüfen (mit Begründung).</p>
 
   <div class="dropzone" id="dz">
-    <div style="font-size:30px;line-height:1">📥</div>
+    <div class="dz-emoji">📥</div>
     <div><b>Dateien hierher ziehen</b> oder klicken zum Auswählen</div>
-    <div class="fmeta" style="margin-top:6px">max. 50 MB pro Datei · mehrere gleichzeitig möglich</div>
+    <div class="dz-hint">max. 50 MB pro Datei · mehrere gleichzeitig möglich</div>
   </div>
   <input type="file" id="fileInput" multiple style="display:none">
 
   <table class="queue" id="queue" style="display:none">
     <thead><tr>
-      <th style="width:30px">✓</th><th>Datei</th><th style="width:190px">Modul</th>
-      <th style="width:170px">Kategorie</th><th style="width:220px">Name</th><th style="width:120px">Confidence</th>
+      <th style="width:34px">✓</th><th>Datei</th><th style="width:200px">Modul</th>
+      <th style="width:180px">Kategorie</th><th style="width:230px">Name</th><th style="width:120px">Confidence</th>
     </tr></thead>
     <tbody id="rows"></tbody>
   </table>
@@ -70,18 +100,22 @@
   <div class="commitbar" id="commitbar" style="display:none">
     <button class="primary" id="btnCommit">Übernehmen</button>
     <span class="sum" id="sum"></span>
-    <a href="#" id="backLink" style="margin-left:auto;font-size:13px">← zurück zum Vault</a>
+    <a href="#" id="backLink" class="back">← zurück zum Vault</a>
   </div>
 </main>
 
 <script src="/assets/util.js"></script>
 <script>
 "use strict";
-const { $, api, apiJson, apiPostJson, toast, escapeText } = window.CV;
+const { $, api, apiJson, apiPostJson, toast, escapeText, escapeAttr, getSession } = window.CV;
 
 const params = new URLSearchParams(location.search);
 const vaultId = params.get("vault");
 if (!vaultId) { alert("Vault-ID fehlt."); location.href = "/"; }
+if (!getSession()) { location.href = "/"; }          // not logged in → login screen
+// style.css hides header/main with visibility:hidden until <body> is .authed
+// (the shared auth gate). This page is session-guarded above, so reveal it now.
+document.body.classList.add("authed");
 const vaultHref = `/vault.html?id=${encodeURIComponent(vaultId)}`;
 $("#crumbVault").href = vaultHref;
 $("#backLink").href = vaultHref;
@@ -90,9 +124,21 @@ let CATS = [];     // [{name, desc}]
 let MODULES = [];  // [{id, name}]
 let THRESHOLD = 0.65;
 const MAX_PARALLEL = 3;
+const MAX_SIZE = 50 * 1024 * 1024;
 let rowSeq = 0;
 
 window.addEventListener("crashvault:auth-expired", () => { location.href = "/"; });
+
+// Guard against losing analyzed-but-uncommitted work (each row cost a ~10s LLM call).
+function hasUncommitted() {
+  return [...$("#rows").children].some(tr => tr._token && !tr.classList.contains("done"));
+}
+window.addEventListener("beforeunload", e => { if (hasUncommitted()) { e.preventDefault(); e.returnValue = ""; } });
+function guardNav(e) {
+  if (hasUncommitted() && !confirm("Analysierte, noch nicht übernommene Dateien gehen verloren. Trotzdem weg?")) e.preventDefault();
+}
+$("#backLink").addEventListener("click", guardNav);
+$("#crumbVault").addEventListener("click", guardNav);
 
 async function init() {
   try {
@@ -100,13 +146,12 @@ async function init() {
     CATS = j.categories || []; MODULES = j.modules || []; THRESHOLD = j.threshold || 0.65;
     $("#aiPill").textContent = "● KI bereit"; $("#aiPill").className = "status-pill ok";
   } catch (e) {
-    if (e.status === 401) return; // api() already routed to login
-    $("#aiPill").textContent = "● KI: " + (e.message || "Fehler"); $("#aiPill").className = "status-pill err";
+    if (e.status === 401) { location.href = "/"; return; }
+    $("#aiPill").textContent = "● KI: Fehler"; $("#aiPill").className = "status-pill err";
     toast("Konnte Import nicht initialisieren: " + e.message, "err");
   }
 }
 
-// ---- dropzone wiring ----
 const dz = $("#dz"), fileInput = $("#fileInput");
 dz.addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", () => { handleFiles([...fileInput.files]); fileInput.value = ""; });
@@ -117,45 +162,59 @@ dz.addEventListener("drop", e => { if (e.dataTransfer && e.dataTransfer.files) h
 function confClass(c) { return c >= 0.8 ? "hi" : c >= THRESHOLD ? "mid" : "lo"; }
 
 function moduleOptions(selId, isNew) {
-  let html = MODULES.map(m => `<option value="${escapeText(m.id)}"${m.id === selId && !isNew ? " selected" : ""}>${escapeText(m.name)}</option>`).join("");
+  let html = MODULES.map(m => `<option value="${escapeAttr(m.id)}"${m.id === selId && !isNew ? " selected" : ""}>${escapeText(m.name)}</option>`).join("");
   html += `<option value="__new__"${isNew ? " selected" : ""}>＋ Neues Modul…</option>`;
   return html;
 }
 function catOptions(sel) {
-  return CATS.map(c => `<option value="${escapeText(c.name)}"${c.name === sel ? " selected" : ""} title="${escapeText(c.desc)}">${escapeText(c.name)}</option>`).join("");
+  return CATS.map(c => `<option value="${escapeAttr(c.name)}"${c.name === sel ? " selected" : ""} title="${escapeAttr(c.desc || "")}">${escapeText(c.name)}</option>`).join("");
 }
 
 function handleFiles(files) {
   if (!files.length) return;
   $("#queue").style.display = ""; $("#commitbar").style.display = "";
-  const tasks = files.map(file => {
+  const tasks = [];
+  for (const file of files) {
     const row = makeRow(file);
-    return () => ingestOne(row);
-  });
+    if (file.size > MAX_SIZE) { failRow(row, "Datei zu groß (> 50 MB) — nicht hochgeladen", false); continue; }
+    if (file.size === 0)     { failRow(row, "Leere Datei — übersprungen", false); continue; }
+    tasks.push(() => ingestOne(row));
+  }
   runPool(tasks, MAX_PARALLEL).then(updateSummary);
 }
 
 function makeRow(file) {
-  const id = "r" + (++rowSeq);
   const tr = document.createElement("tr");
-  tr.innerHTML = `
-    <td><input type="checkbox" class="acc" disabled></td>
-    <td><div class="fname" title="${escapeText(file.name)}">${escapeText(file.name)}</div>
-        <div class="fmeta">${(file.size/1024).toFixed(0)} KB</div></td>
-    <td colspan="4"><span class="rowstatus">In Warteschlange…</span></td>`;
+  tr.id = "r" + (++rowSeq);
   $("#rows").appendChild(tr);
-  return { id, file, tr, proposal: null, failed: false };
+  return { file, tr };
 }
 
-function setRowStatus(row, text, err) {
-  const cell = row.tr.querySelector("td:last-child");
-  // when still in the 3-col-merged state
-  const st = row.tr.querySelector(".rowstatus");
-  if (st) { st.textContent = text; st.className = "rowstatus" + (err ? " err" : ""); }
+function fileCell(file) {
+  return `<td><div class="fname" title="${escapeAttr(file.name)}">${escapeText(file.name)}</div>
+          <div class="fmeta">${(file.size/1024).toFixed(0)} KB</div></td>`;
+}
+
+function failRow(row, msg, retryable) {
+  row.tr._token = null;
+  row.tr.innerHTML = `
+    <td><input type="checkbox" class="acc" disabled></td>
+    ${fileCell(row.file)}
+    <td colspan="4"><span class="rowstatus err">${escapeText(msg)}</span></td>`;
+  if (retryable) {
+    const btn = document.createElement("button");
+    btn.className = "small retry"; btn.textContent = "↻ Erneut";
+    btn.addEventListener("click", () => ingestOne(row));
+    row.tr.querySelector("td:last-child").appendChild(btn);
+  }
+  updateSummary();
 }
 
 async function ingestOne(row) {
-  setRowStatus(row, "Analysiere… ⏳");
+  row.tr.innerHTML = `
+    <td><input type="checkbox" class="acc" disabled></td>
+    ${fileCell(row.file)}
+    <td colspan="4"><span class="rowstatus">Analysiere… ⏳</span></td>`;
   try {
     const res = await api(`/api/ingest?vault=${encodeURIComponent(vaultId)}&name=${encodeURIComponent(row.file.name)}`, {
       method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: row.file
@@ -163,9 +222,9 @@ async function ingestOne(row) {
     row.proposal = await res.json();
     fillRow(row);
   } catch (e) {
-    if (e.status === 401) return;
-    row.failed = true;
-    setRowStatus(row, "Fehler: " + (e.message || e), true);
+    if (e.status === 401) { location.href = "/"; return; }
+    failRow(row, "Fehler: " + (e.message || e), true);
+    return;
   }
   updateSummary();
 }
@@ -174,17 +233,18 @@ function fillRow(row) {
   const p = row.proposal;
   const isNew = !p.proposedModuleId;
   const c = Math.round((p.confidence || 0) * 100);
+  const meta = `${(row.file.size/1024).toFixed(0)} KB · ${escapeText(p.extractor || "")}${p.note ? " · " + escapeText(p.note) : ""}`;
   row.tr.innerHTML = `
     <td><input type="checkbox" class="acc" ${p.needsReview ? "" : "checked"}></td>
-    <td><div class="fname" title="${escapeText(p.name)}">${escapeText(p.name)}</div>
-        <div class="fmeta">${(row.file.size/1024).toFixed(0)} KB · ${escapeText(p.extractor || "")}${p.note ? " · " + escapeText(p.note) : ""}</div></td>
+    <td><div class="fname" title="${escapeAttr(p.name)}">${escapeText(p.name)}</div>
+        <div class="fmeta">${meta}</div>
+        ${p.needsReview && p.reasoning ? `<div class="fmeta reason">💡 ${escapeText(p.reasoning)}</div>` : ""}</td>
     <td><select class="mod">${moduleOptions(p.proposedModuleId, isNew)}</select>
-        <input type="text" class="newmod" placeholder="Name des neuen Moduls" style="display:none" value="${escapeText(p.newModuleName || "")}"></td>
+        <input type="text" class="newmod" placeholder="Name des neuen Moduls" style="display:none" value="${escapeAttr(p.newModuleName || "")}"></td>
     <td><select class="cat">${catOptions(p.proposedCategory)}</select></td>
-    <td><input type="text" class="nm" value="${escapeText(p.suggestedName || p.name)}"></td>
+    <td><input type="text" class="nm" value="${escapeAttr(p.suggestedName || p.name)}"></td>
     <td><span class="conf ${confClass(p.confidence)}">${c}%</span>
-        <span class="why" title="${escapeText(p.reasoning || "")}">ⓘ</span></td>`;
-  // Stash the bits commit() needs directly on the <tr>.
+        <span class="why" title="${escapeAttr(p.reasoning || "")}">ⓘ</span></td>`;
   row.tr._token = p.token; row.tr._confidence = p.confidence; row.tr._autoAccepted = !p.needsReview;
   const modSel = row.tr.querySelector(".mod"), newInp = row.tr.querySelector(".newmod");
   function syncNew() { newInp.style.display = modSel.value === "__new__" ? "" : "none"; }
@@ -192,8 +252,31 @@ function fillRow(row) {
   row.tr.querySelector(".acc").addEventListener("change", updateSummary);
 }
 
+// Re-render the module <select> of every still-open row (so a freshly-created
+// module becomes selectable for the rest of the queue), preserving selection.
+function refreshModuleSelects() {
+  for (const tr of $("#rows").children) {
+    if (tr.classList.contains("done")) continue;
+    const sel = tr.querySelector(".mod"); if (!sel) continue;
+    const cur = sel.value, isNew = cur === "__new__";
+    sel.innerHTML = moduleOptions(isNew ? null : cur, isNew);
+    sel.value = cur;
+  }
+}
+
+function markDone(tr, moduleId, category) {
+  const nameEl = tr.querySelector(".fname");
+  const name = nameEl ? nameEl.textContent : "";
+  tr.classList.add("done");
+  tr.innerHTML = `
+    <td><span class="conf hi">✓</span></td>
+    <td><div class="fname" title="${escapeAttr(name)}">${escapeText(name)}</div></td>
+    <td colspan="4" class="donecell">übernommen → <b>${escapeText(moduleId)}</b> / ${escapeText(category)}</td>`;
+  tr._token = null;
+}
+
 function acceptedRows() {
-  return [...$("#rows").children].map(tr => tr).filter(tr => {
+  return [...$("#rows").children].filter(tr => {
     const acc = tr.querySelector(".acc");
     return acc && acc.checked && tr.querySelector(".mod");
   });
@@ -204,39 +287,61 @@ function updateSummary() {
   $("#btnCommit").disabled = !n;
 }
 
+function flagInvalid(tr) {
+  const isNew = tr.querySelector(".mod").value === "__new__";
+  const newInp = tr.querySelector(".newmod"), nmInp = tr.querySelector(".nm");
+  const target = (isNew && !newInp.value.trim()) ? newInp : (!nmInp.value.trim() ? nmInp : null);
+  if (target) {
+    target.style.borderColor = "var(--danger)";
+    target.addEventListener("input", () => { target.style.borderColor = ""; }, { once: true });
+  }
+}
+
 async function commit() {
   const trs = acceptedRows();
   if (!trs.length) return;
-  $("#btnCommit").disabled = true; $("#btnCommit").textContent = "Übernehme…";
-  const payload = trs.map(tr => {
+
+  const valid = [], invalid = [];
+  for (const tr of trs) {
     const mod = tr.querySelector(".mod").value;
     const isNew = mod === "__new__";
-    return {
-      token: tr._token,
-      targetModuleId: isNew ? null : mod,
-      newModuleName: isNew ? tr.querySelector(".newmod").value.trim() : null,
-      category: tr.querySelector(".cat").value,
-      finalName: tr.querySelector(".nm").value.trim(),
-      confidence: tr._confidence,
-      autoAccepted: tr._autoAccepted
-    };
-  }).filter(it => it.token && (it.targetModuleId || it.newModuleName) && it.finalName);
+    const newName = isNew ? tr.querySelector(".newmod").value.trim() : "";
+    const finalName = tr.querySelector(".nm").value.trim();
+    if (tr._token && (isNew ? newName : mod) && finalName) {
+      valid.push({ tr, mod, isNew, newName, finalName });
+    } else { invalid.push(tr); flagInvalid(tr); }
+  }
+  if (!valid.length) { toast("Bei den ausgewählten Zeilen fehlt Modul oder Name.", "err"); return; }
+
+  $("#btnCommit").disabled = true; $("#btnCommit").textContent = "Übernehme…";
+  const payload = valid.map(v => ({
+    token: v.tr._token,
+    targetModuleId: v.isNew ? null : v.mod,
+    newModuleName: v.isNew ? v.newName : null,
+    category: v.tr.querySelector(".cat").value,
+    finalName: v.finalName,
+    confidence: v.tr._confidence,
+    autoAccepted: v.tr._autoAccepted
+  }));
 
   try {
     const r = await apiPostJson(`/api/ingest-commit?vault=${encodeURIComponent(vaultId)}`, { items: payload });
-    const placedTokens = new Set((r.items || []).map(i => i.token));
-    for (const tr of trs) {
-      if (placedTokens.has(tr._token)) {
-        tr.classList.add("done");
-        tr.querySelector(".acc").checked = false; tr.querySelector(".acc").disabled = true;
-      }
+    const placed = new Map((r.items || []).map(i => [i.token, i]));
+    for (const v of valid) {
+      const it = placed.get(v.tr._token);
+      if (it) markDone(v.tr, it.moduleId, it.category);
+    }
+    if (r.modulesCreated) {
+      try { const j = await apiJson(`/api/ingest?vault=${encodeURIComponent(vaultId)}`); MODULES = j.modules || MODULES; } catch (e) {}
+      refreshModuleSelects();
     }
     let msg = `${r.placed} Datei(en) übernommen`;
     if (r.modulesCreated) msg += `, ${r.modulesCreated} neues Modul`;
+    if (invalid.length) msg += `, ${invalid.length} übersprungen (Modul/Name fehlt)`;
     if (r.errors && r.errors.length) msg += `, ${r.errors.length} Fehler`;
-    toast(msg, r.errors && r.errors.length ? "err" : "ok");
-    updateSummary();
+    toast(msg, (invalid.length || (r.errors && r.errors.length)) ? "err" : "ok");
   } catch (e) {
+    if (e.status === 401) { location.href = "/"; return; }
     toast("Übernehmen fehlgeschlagen: " + e.message, "err");
   } finally {
     $("#btnCommit").textContent = "Übernehmen"; updateSummary();

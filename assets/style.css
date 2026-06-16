@@ -14,6 +14,9 @@
   --warn: #fbbf24;
   --radius: 10px;
   --shadow: 0 6px 24px rgba(0,0,0,.25);
+  /* Tell the browser this is a dark UI so native controls — <select> option
+     popups, scrollbars, date pickers — render dark instead of light-on-white. */
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }

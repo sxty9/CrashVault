@@ -51,7 +51,8 @@ module.exports = async (req, res) => {
 
     const registry = store.readRegistry(vaultId) || { modules: [] };
     const existingIds = new Set(registry.modules.map(m => m.id));
-    const newNameToId = new Map(); // dedupe new modules within this batch
+    const newNameToId = new Map(); // dedupe new modules within this batch (keyed by slug)
+    const seenDest = new Set();    // dest paths used in this batch (avoid in-batch clobber)
     let modulesCreated = 0;
     const placed = [];
     const errors = [];
@@ -66,14 +67,20 @@ module.exports = async (req, res) => {
         if (!moduleId || !existingIds.has(moduleId)) {
           const wanted = (item.newModuleName || "").trim();
           if (!wanted) { errors.push({ token: item.token, error: "kein Zielmodul" }); continue; }
-          if (newNameToId.has(wanted)) {
-            moduleId = newNameToId.get(wanted);
+          // Dedupe by SLUG so "Rechnernetze" / "rechnernetze " converge to one module,
+          // and reuse an existing module if its slug already matches (no cross-batch dupes).
+          const baseSlug = slugify(wanted);
+          if (newNameToId.has(baseSlug)) {
+            moduleId = newNameToId.get(baseSlug);
+          } else if (existingIds.has(baseSlug)) {
+            moduleId = baseSlug;
+            newNameToId.set(baseSlug, baseSlug);
           } else {
-            let id = slugify(wanted), n = 1;
-            while (existingIds.has(id)) id = `${slugify(wanted)}-${++n}`;
+            let id = baseSlug, n = 1;
+            while (existingIds.has(id)) id = `${baseSlug}-${++n}`;
             registry.modules.push({ id, name: wanted.slice(0, 80), color: "#38bdf8", createdAt: new Date().toISOString() });
             existingIds.add(id);
-            newNameToId.set(wanted, id);
+            newNameToId.set(baseSlug, id);
             modulesCreated++;
             moduleId = id;
           }
@@ -86,7 +93,20 @@ module.exports = async (req, res) => {
         const buf = store.readFileAt(staged);
         if (buf == null) { errors.push({ token: item.token, error: "Staging-Datei leer" }); continue; }
 
-        const destRel = `vaults/${vaultId}/modules/${moduleId}/files/${category}/${finalName}`;
+        const dir = `vaults/${vaultId}/modules/${moduleId}/files/${category}`;
+        let destRel = `${dir}/${finalName}`;
+        // Never clobber: if the target already exists on disk or was used earlier
+        // in this batch, suffix the name (foo.pdf → foo-2.pdf) instead of overwriting.
+        if (store.exists(destRel) || seenDest.has(destRel)) {
+          const dot = finalName.lastIndexOf(".");
+          const stem = dot > 0 ? finalName.slice(0, dot) : finalName;
+          const ext  = dot > 0 ? finalName.slice(dot) : "";
+          let n = 2;
+          do { destRel = `${dir}/${stem}-${n}${ext}`; n++; } while (store.exists(destRel) || seenDest.has(destRel));
+        }
+        seenDest.add(destRel);
+        const placedName = destRel.split("/").pop();
+
         store.writeFileAt(destRel, buf);
         store.removeFileAt(staged);
 
@@ -95,12 +115,12 @@ module.exports = async (req, res) => {
           actor: item.autoAccepted ? "ai" : "ai+confirm",
           user: ctx.user.username,
           dst: destRel,
-          moduleId, category, filename: finalName,
+          moduleId, category, filename: placedName,
           confidence: typeof item.confidence === "number" ? item.confidence : null,
           sha256: crypto.createHash("sha256").update(buf).digest("hex")
         }));
 
-        placed.push({ token: item.token, path: destRel, moduleId, category });
+        placed.push({ token: item.token, path: destRel, moduleId, category, renamed: placedName !== finalName ? placedName : undefined });
       } catch (e) {
         errors.push({ token: item && item.token, error: String(e.message || e).slice(0, 120) });
       }
