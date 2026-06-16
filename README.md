@@ -102,10 +102,11 @@ CrashVault läuft als **einzelner Node-Prozess** (`server.js`) — kein Vercel,
 keine Serverless-Functions mehr. Frontend + `/api/*`-Handler werden aus
 demselben Prozess bedient.
 
-**Produktiv** wird auf einem eigenen Ubuntu-Server gehostet, erreichbar via
-Cloudflare Tunnel unter `crashvault.henrysoase.org`. Die komplette
-Server-Anleitung (Node, systemd, Tunnel, Auto-Deploy via self-hosted
-GitHub-Runner) steht in **[docs/SELFHOST.md](docs/SELFHOST.md)**.
+**Produktiv läuft die App live** auf einem eigenen Ubuntu-Server, erreichbar
+via Cloudflare Tunnel (sxgate) unter **https://crashvault.henrysoase.org** —
+Vercel ist abgelöst. Die komplette Server-Anleitung (Node, systemd, Tunnel,
+Auto-Deploy via self-hosted GitHub-Runner) steht in
+**[docs/SELFHOST.md](docs/SELFHOST.md)**.
 
 **Environment-Variablen** (im `.env`, Vorlage `.env.example`):
 

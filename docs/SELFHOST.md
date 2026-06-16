@@ -3,6 +3,19 @@
 Runbook für den Umzug von Vercel auf den eigenen Ubuntu-Server, erreichbar
 unter `https://crashvault.henrysoase.org` via Cloudflare Tunnel (sxgate).
 
+> **Status: live seit 2026-06-16.** Der Umzug ist vollzogen — CrashVault läuft
+> als systemd-Service `crashvault` aus `/home/nanu/CrashVault` und ist über den
+> sxgate-Tunnel öffentlich erreichbar. Abweichungen vom ursprünglichen Plan:
+> - **Deploy-Pfad:** das bereits vorhandene Repo-Clone `/home/nanu/CrashVault`
+>   dient direkt als Deploy-Verzeichnis (kein separater `~/Code`-Clone).
+> - **`GITHUB_TOKEN`:** der `gh`-CLI-Session-Token des Server-Users (`sxty9`,
+>   `repo`-Scope = Contents R+W). Für mehr Stabilität kann hier später der
+>   originale Vercel-PAT eingetragen werden.
+> - **`JWT_SECRET`:** frisch erzeugt (der Vercel-Wert lag nicht vor) → bestehende
+>   Sessions wurden einmalig ausgeloggt; die Logins aus `accounts.js` gelten weiter.
+> - **Auto-Deploy-Runner (Abschnitt 6):** noch nicht eingerichtet — `git push`
+>   deployt erst nach Registrierung des self-hosted Runners automatisch.
+
 Architektur:
 
 ```
@@ -97,8 +110,8 @@ After=network.target
 [Service]
 Type=simple
 User=nanu
-WorkingDirectory=/home/nanu/Code/CrashVault
-EnvironmentFile=/home/nanu/Code/CrashVault/.env
+WorkingDirectory=/home/nanu/CrashVault
+EnvironmentFile=/home/nanu/CrashVault/.env
 ExecStart=/usr/bin/node server.js
 Restart=on-failure
 RestartSec=5
@@ -187,7 +200,7 @@ GitHub → Repo → Settings → Secrets and variables → Actions → **Variabl
 
 | Variable | Wert |
 |---|---|
-| `DEPLOY_DIR` | `/home/nanu/Code/CrashVault` |
+| `DEPLOY_DIR` | `/home/nanu/CrashVault` |
 | `APP_PORT` | `29927` |
 
 Der Workflow `.github/workflows/deploy.yml` nutzt diese. Keine SSH-Secrets

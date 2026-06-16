@@ -33,7 +33,7 @@ jobs:
           PORT: ${{ vars.APP_PORT }}
         run: |
           set -euo pipefail
-          DIR="${DEPLOY_DIR:-$HOME/Code/CrashVault}"
+          DIR="${DEPLOY_DIR:-$HOME/CrashVault}"
           APP_PORT="${PORT:-29927}"
           echo "Deploying into $DIR"
           cd "$DIR"
