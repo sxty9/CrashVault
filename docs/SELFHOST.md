@@ -235,6 +235,38 @@ GitHub → Actions → der Run sollte grün durchlaufen; auf dem Server zeigt
 
 ---
 
+## Backup & Restore
+
+`/var/lib/crashvault` ist die einzige Live-Kopie aller Daten. Ein eigenes
+git-Repo darin pusht Snapshots in das **private** Repo `sxty9/crashvault-data`
+(systemd-Timer `crashvault-backup.timer`, alle 15 min, via `scripts/backup-push.sh`).
+
+**Credentials verlassen den Server nicht:** Die echte `accounts.json` (mit
+bcrypt-Hashes) ist im Backup-Repo gitignored. Stattdessen wird vor jedem Push
+eine **geschwärzte** `accounts.redacted.json` erzeugt (`scripts/redact-accounts.js`)
+— Account-Records (id, username, role) bleiben erhalten, nur der `passwordHash`
+wird durch `RESET_REQUIRED` ersetzt. So bleibt die User↔Vault-Verknüpfung beim
+Restore intakt, ohne dass ein Hash offsite landet.
+
+**Einmalige Einrichtung** (der erste Push muss vom Menschen ausgehen — der Agent
+ist dafür gesperrt):
+```bash
+cd /var/lib/crashvault
+git push -u origin main
+sudo systemctl enable --now crashvault-backup.timer
+```
+
+**Restore nach Plattenausfall:**
+```bash
+git clone git@github.com:sxty9/crashvault-data.git /var/lib/crashvault
+cd /var/lib/crashvault
+cp accounts.redacted.json accounts.json            # Account-Records zurückholen
+cd /home/nanu/CrashVault
+node scripts/set-password.js henry <neues-passwort> # neues Passwort für bestehende id
+sudo systemctl restart crashvault
+```
+Daten + User-IDs sind intakt (Vault-Besitz bleibt); nur das Passwort ist neu gesetzt.
+
 ## Troubleshooting
 
 | Symptom | Check |

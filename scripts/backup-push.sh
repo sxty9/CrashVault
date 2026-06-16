@@ -11,6 +11,7 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DATA_DIR="${CRASHVAULT_DATA_DIR:-/var/lib/crashvault}"
 cd "$DATA_DIR"
 
@@ -18,6 +19,11 @@ if [ ! -d .git ]; then
   echo "backup-push: no git repo in $DATA_DIR — run the one-time setup first" >&2
   exit 1
 fi
+
+# Refresh the redacted accounts copy (the real accounts.json is gitignored and
+# never leaves the host — only accounts.redacted.json, with hashes stripped,
+# is backed up). See scripts/redact-accounts.js.
+node "$SCRIPT_DIR/redact-accounts.js"
 
 git add -A
 if ! git diff --cached --quiet; then
