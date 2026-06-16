@@ -6,7 +6,7 @@
 // a fresh JWT so the caller's current device stays logged in.
 
 const bcrypt = require("bcryptjs");
-const gh = require("../_github.js");
+const gh = require("../_store.js");
 const auth = require("../_auth.js");
 
 const BCRYPT_COST = 12;

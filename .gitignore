@@ -3,3 +3,6 @@ node_modules/
 .vercel/
 .env
 .env.local
+# Local server data never belongs in the code repo (lives in /var/lib/crashvault).
+data/
+*.tmp

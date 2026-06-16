@@ -2,17 +2,17 @@
 //   Body: raw binary (Content-Type: application/octet-stream)  → { path, sha }
 //   Or:   JSON { path, base64 }                                 → { path, sha }
 //
-// The path MUST live under vaults/<vid>/modules/<mid>/files/. The caller
-// must be a member of the target vault. createBlob alone doesn't add the
-// file to a commit — only writes the blob; the data.js POST then references
-// the blob's sha to actually attach it.
+// Writes the file straight to the server disk under
+// vaults/<vid>/modules/<mid>/files/ (one optional category subfolder allowed).
+// The caller must be a member of the target vault. The module's data.json POST
+// then references the path so the attachment shows up in a tile.
 
-const gh = require("./_github.js");
+const store = require("./_store.js");
 const auth = require("./_auth.js");
 
-// vaults/<vid>/modules/<mid>/files/<single-segment filename>
+// vaults/<vid>/modules/<mid>/files/<name>  — with one optional <category>/ level.
 const UPLOAD_PATH_RE =
-  /^vaults\/(v_[a-z0-9]{6,40})\/modules\/([a-z0-9][a-z0-9_-]{0,40})\/files\/[^/]+$/;
+  /^vaults\/(v_[a-z0-9]{6,40})\/modules\/([a-z0-9][a-z0-9_-]{0,40})\/files\/(?:[^/]+\/)?[^/]+$/;
 
 function parseUploadPath(path) {
   if (!path || typeof path !== "string") return null;
@@ -22,11 +22,13 @@ function parseUploadPath(path) {
   return { vaultId: m[1], moduleId: m[2] };
 }
 
+const MAX_SIZE = 50 * 1024 * 1024;
+
 module.exports = async (req, res) => {
   try {
     if (req.method !== "POST") {
       res.setHeader("Allow", "POST");
-      return gh.sendJson(res, 405, { error: "Method not allowed" });
+      return store.sendJson(res, 405, { error: "Method not allowed" });
     }
 
     const contentType = req.headers["content-type"] || "";
@@ -36,32 +38,33 @@ module.exports = async (req, res) => {
       const path = url.searchParams.get("path");
       const parsed = parseUploadPath(path);
       if (!parsed) {
-        return gh.sendJson(res, 400, { error: "Pfad muss unter vaults/<vid>/modules/<mid>/files/ liegen" });
+        return store.sendJson(res, 400, { error: "Pfad muss unter vaults/<vid>/modules/<mid>/files/ liegen" });
       }
       await auth.requireVaultMember(req, parsed.vaultId);
 
       const chunks = [];
       let totalSize = 0;
-      const MAX_SIZE = 50 * 1024 * 1024;
       for await (const chunk of req) {
         totalSize += chunk.length;
-        if (totalSize > MAX_SIZE) return gh.sendJson(res, 413, { error: "Datei zu groß (max 50 MB)" });
+        if (totalSize > MAX_SIZE) return store.sendJson(res, 413, { error: "Datei zu groß (max 50 MB)" });
         chunks.push(chunk);
       }
       const buf = Buffer.concat(chunks);
-      const blob = await gh.createBlob(buf.toString("base64"));
-      return gh.sendJson(res, 200, { path, sha: blob.sha });
+      store.writeFileAt(path, buf);
+      return store.sendJson(res, 200, { path, sha: store.shaOf(buf) });
     }
 
-    const { path, base64 } = await gh.readJson(req);
+    const { path, base64 } = await store.readJson(req);
     const parsed = parseUploadPath(path);
     if (!parsed || !base64) {
-      return gh.sendJson(res, 400, { error: "Pfad muss unter vaults/<vid>/modules/<mid>/files/ liegen + base64 required" });
+      return store.sendJson(res, 400, { error: "Pfad muss unter vaults/<vid>/modules/<mid>/files/ liegen + base64 required" });
     }
     await auth.requireVaultMember(req, parsed.vaultId);
-    const blob = await gh.createBlob(base64);
-    return gh.sendJson(res, 200, { path, sha: blob.sha });
+    const buf = Buffer.from(base64, "base64");
+    if (buf.length > MAX_SIZE) return store.sendJson(res, 413, { error: "Datei zu groß (max 50 MB)" });
+    store.writeFileAt(path, buf);
+    return store.sendJson(res, 200, { path, sha: store.shaOf(buf) });
   } catch (e) {
-    return gh.sendError(res, e);
+    return store.sendError(res, e);
   }
 };

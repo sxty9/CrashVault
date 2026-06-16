@@ -3,7 +3,7 @@
 //
 // Admin-only. Toggles the global `config.allowSignup` flag in accounts.js.
 
-const gh = require("../_github.js");
+const gh = require("../_store.js");
 const auth = require("../_auth.js");
 
 module.exports = async (req, res) => {

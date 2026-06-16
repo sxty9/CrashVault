@@ -5,7 +5,7 @@
 // preferences, github-link. The full object replaces server state on POST
 // (client owns the merge); server validates basic shape only.
 
-const gh = require("./_github.js");
+const gh = require("./_store.js");
 const auth = require("./_auth.js");
 
 function sanitize(settings) {

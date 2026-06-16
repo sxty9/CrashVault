@@ -6,7 +6,7 @@
 // invalidates the session (used for "logout everywhere" and password change).
 
 const jwt = require("jsonwebtoken");
-const gh = require("./_github.js");
+const gh = require("./_store.js");
 
 const SESSION_TTL = "7d";
 

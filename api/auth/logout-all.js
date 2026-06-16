@@ -3,7 +3,7 @@
 // every device) becomes invalid on the next request. The client should then
 // drop its local session and re-route to the login screen.
 
-const gh = require("../_github.js");
+const gh = require("../_store.js");
 const auth = require("../_auth.js");
 
 module.exports = async (req, res) => {

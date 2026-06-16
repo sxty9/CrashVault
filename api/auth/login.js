@@ -8,7 +8,7 @@
 // a single lambda instance only. Sufficient for the threat model.
 
 const bcrypt = require("bcryptjs");
-const gh = require("../_github.js");
+const gh = require("../_store.js");
 const auth = require("../_auth.js");
 
 // Per-lambda failure counters

@@ -8,7 +8,7 @@
 // (so it can show / hide the Sign Up tab). We return `config.allowSignup`
 // alongside the user when present.
 
-const gh = require("../_github.js");
+const gh = require("../_store.js");
 const auth = require("../_auth.js");
 
 module.exports = async (req, res) => {

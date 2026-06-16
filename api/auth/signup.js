@@ -8,7 +8,7 @@
 //  2. Otherwise: requires `config.allowSignup` to be true (admin-toggled).
 
 const bcrypt = require("bcryptjs");
-const gh = require("../_github.js");
+const gh = require("../_store.js");
 const auth = require("../_auth.js");
 
 const BCRYPT_COST = 12;

@@ -72,10 +72,10 @@ registerApiDir(path.join(ROOT, "api"), "");
 
 // ============================================================
 // Static allowlist. We never fall through to "serve any file" — only the
-// frontend assets below are reachable. Everything else (accounts.js,
-// vaults/, users/, modules/, .env, server.js, node_modules/, .git/) is
-// invisible. This is the security boundary: the whole auth layer would be
-// pointless if the data files were directly downloadable.
+// frontend assets below are reachable. Everything else (.env, server.js,
+// node_modules/, .git/) is invisible. User data no longer lives in the repo
+// at all — it sits on disk under the data dir (api/_store.js) and is only
+// reachable through the authenticated /api/* handlers.
 // ============================================================
 const STATIC_EXACT = {
   "/":             "index.html",
@@ -198,13 +198,19 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  // Startup self-check: warn loudly if critical env is missing so a
-  // misconfigured deploy is obvious in journalctl rather than failing
-  // silently on the first request.
-  const missing = ["GITHUB_TOKEN", "GITHUB_OWNER", "JWT_SECRET"].filter(k => !process.env[k]);
+  // Startup self-check: surface a misconfigured deploy in journalctl rather
+  // than failing silently on the first request. All persistent state lives on
+  // disk under the data dir now (see api/_store.js) — no GitHub token needed.
+  const store = require("./api/_store.js");
   console.log(`CrashVault listening on http://${HOST}:${PORT}`);
   console.log(`Registered ${apiHandlers.size} API endpoints`);
-  if (missing.length) {
-    console.warn(`WARNING: missing env vars: ${missing.join(", ")} — API calls will fail until set.`);
+  console.log(`Data dir: ${store.DATA_DIR}`);
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+    console.warn("WARNING: JWT_SECRET missing or too short (need 32+ chars) — auth will fail.");
+  }
+  try {
+    fs.accessSync(store.DATA_DIR, fs.constants.W_OK);
+  } catch (e) {
+    console.warn(`WARNING: data dir ${store.DATA_DIR} not writable — saves will fail. (${e.code})`);
   }
 });

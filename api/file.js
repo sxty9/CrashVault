@@ -1,9 +1,12 @@
-// GET /api/file?path=modules/<id>/files/<name>  → binary file content
+// GET /api/file?path=vaults/<vid>/modules/<mid>/files/<name>  → binary content
 //
-// Reads files from the repo. Restricted to the modules/ tree so internal repo
-// files cannot be served by accident.
+// Reads attachment files from the server disk. Restricted to the per-module
+// files/ tree so nothing else under the data dir can be served. Deliberately
+// not auth-gated: attachments are opened via window.open() which can't attach
+// an Authorization header, and _store.resolveRel already confines the path to
+// the data dir.
 
-const gh = require("./_github.js");
+const store = require("./_store.js");
 
 const MIME = {
   pdf: "application/pdf",
@@ -19,31 +22,27 @@ const MIME = {
   mov: "video/quicktime", zip: "application/zip"
 };
 
+// vaults/<vid>/modules/<mid>/files/<name>  — with one optional <category>/ level.
+const FILE_PATH_RE =
+  /^vaults\/v_[a-z0-9]{6,40}\/modules\/[a-z0-9][a-z0-9_-]{0,40}\/files\/(?:[^/]+\/)?[^/]+$/;
+
 module.exports = async (req, res) => {
   try {
     if (req.method !== "GET") {
       res.setHeader("Allow", "GET");
-      return gh.sendJson(res, 405, { error: "Method not allowed" });
+      return store.sendJson(res, 405, { error: "Method not allowed" });
     }
     const url = new URL(req.url, `http://${req.headers.host || "x"}`);
     const path = url.searchParams.get("path");
     if (!path || path.startsWith("/") || path.includes("..") || path.includes("\\")) {
-      return gh.sendJson(res, 400, { error: "Invalid path" });
+      return store.sendJson(res, 400, { error: "Invalid path" });
     }
-    // Phase 2: paths live under vaults/<vid>/modules/<mid>/files/<name>.
-    // We deliberately don't auth-gate /api/file because attachments are
-    // opened via window.open() which can't attach an Authorization header.
-    // The Vercel-served repo content is publicly readable via raw.githubusercontent
-    // anyway, so adding auth here would give a false sense of confidentiality.
-    if (!/^vaults\/v_[a-z0-9]{6,40}\/modules\/[a-z0-9][a-z0-9_-]{0,40}\/files\/[^/]+$/.test(path)) {
-      return gh.sendJson(res, 400, { error: "Pfad muss unter vaults/<vid>/modules/<mid>/files/ liegen" });
+    if (!FILE_PATH_RE.test(path)) {
+      return store.sendJson(res, 400, { error: "Pfad muss unter vaults/<vid>/modules/<mid>/files/ liegen" });
     }
-    const c = await gh.getContent(path);
-    if (!c) return gh.sendJson(res, 404, { error: "Not found" });
-    const b64 = c.content || (await gh.getBlob(c.sha)).content;
-    if (!b64) return gh.sendJson(res, 500, { error: "No content from GitHub" });
+    const buf = store.readFileAt(path);
+    if (buf == null) return store.sendJson(res, 404, { error: "Not found" });
 
-    const buf = Buffer.from(b64, "base64");
     const ext = (path.split(".").pop() || "").toLowerCase();
     const mime = MIME[ext] || "application/octet-stream";
     const filename = path.split("/").pop();
@@ -55,6 +54,6 @@ module.exports = async (req, res) => {
     res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(filename)}"`);
     res.end(buf);
   } catch (e) {
-    return gh.sendError(res, e);
+    return store.sendError(res, e);
   }
 };

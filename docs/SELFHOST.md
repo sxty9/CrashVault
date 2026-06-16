@@ -24,8 +24,11 @@ Browser ──HTTPS──▶ Cloudflare-Edge ──Tunnel──▶ cloudflared �
 ```
 
 CrashVault selbst ist ein einzelner Node-Prozess (`server.js`), der die
-Frontend-Dateien ausliefert und `/api/*` an dieselben Handler routet, die
-vorher auf Vercel liefen. Daten leben weiterhin im GitHub-Repo.
+Frontend-Dateien ausliefert und `/api/*` an die Handler routet. **Alle
+Nutzdaten leben auf der Server-Platte unter `/var/lib/crashvault`** (plain
+JSON + Uploads) — das Repo enthält nur Code. Die einmalige Migration vom
+früheren GitHub-Repo-Storage erledigt `scripts/migrate-to-disk.js`; Backup
+siehe Abschnitt „Backup".
 
 ---
 
@@ -77,12 +80,12 @@ Fülle aus:
 
 | Variable | Wert |
 |---|---|
-| `GITHUB_TOKEN` | derselbe PAT wie auf Vercel (Contents R+W) |
-| `GITHUB_OWNER` | `sxty9` |
-| `GITHUB_REPO` | `CrashVault` |
-| `GITHUB_BRANCH` | `main` |
-| `JWT_SECRET` | **exakt** der Vercel-Wert |
+| `JWT_SECRET` | 32+ Zeichen Zufall (`openssl rand -hex 32`); Ändern = alle Sessions raus |
 | `PORT` | `29927` |
+| `HOST` | `127.0.0.1` |
+| `CRASHVAULT_DATA_DIR` | optional, Default `/var/lib/crashvault` |
+
+(Ein GitHub-Token braucht die App **nicht** mehr — Daten liegen auf der Platte.)
 
 Test direkt:
 
@@ -220,7 +223,7 @@ GitHub → Actions → der Run sollte grün durchlaufen; auf dem Server zeigt
 ## 7. Cutover-Checkliste (Vercel abschalten)
 
 1. Self-Host läuft + `https://crashvault.henrysoase.org` antwortet ✓
-2. Login funktioniert (accounts.js liegt im Repo, JWT_SECRET identisch) ✓
+2. Login funktioniert (accounts.json liegt unter /var/lib/crashvault) ✓
 3. Vault-Dashboard, BWL-Modul, Speichern getestet ✓
 4. **AnkiConnect-CORS umstellen**: Anki → Extras → Erweiterungen →
    AnkiConnect → Konfiguration → in `webCorsOriginList` die alte
@@ -238,7 +241,7 @@ GitHub → Actions → der Run sollte grün durchlaufen; auf dem Server zeigt
 |---|---|
 | 502 im Browser | `systemctl status crashvault` — läuft der Node-Prozess? |
 | Login schlägt fehl, vorher ging's | JWT_SECRET ≠ Vercel-Wert → alle Sessions raus, einmal neu anmelden |
-| API 500 „GITHUB_TOKEN missing" | `.env` nicht geladen — `EnvironmentFile`-Pfad im Service prüfen |
+| API 500 / „not writable" | `/var/lib/crashvault` fehlt oder gehört nicht `nanu` — `sudo chown -R nanu:nanu /var/lib/crashvault` |
 | Anki „Failed to fetch" | CORS-Origin in AnkiConnect nicht aktualisiert (Schritt 7.4) |
 | Deploy-Run hängt | Runner-Dienst tot: `sudo ~/actions-runner/svc.sh status` |
 | `sudo: a password is required` im Run | sudoers-Eintrag (6b) fehlt oder falscher systemctl-Pfad |

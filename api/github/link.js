@@ -2,25 +2,24 @@
 // DELETE /api/github/link                       → { ok }
 //
 // Light GitHub linkage. Server fetches the public github.com /users/<login>
-// endpoint to get the canonical `login`, `id`, and `avatar_url`, then
-// persists those plus a deterministic commit-email into users/<uid>/settings.js.
-// Commits made afterward will be attributed to that identity on GitHub.
+// endpoint to get the canonical `login`, `id`, and `avatar_url`, then persists
+// those into users/<uid>/settings.json — purely cosmetic now (avatar/identity);
+// data lives on the server disk, so there are no commits to attribute.
 //
-// We use the central Vercel GITHUB_TOKEN to make the API call so we get the
-// authenticated rate limit (5000/h) instead of the public 60/h.
+// If a GITHUB_TOKEN happens to be set we use it for the higher rate limit,
+// otherwise the unauthenticated public API (60/h) is plenty for occasional links.
 
-const gh = require("../_github.js");
+const gh = require("../_store.js");
 const auth = require("../_auth.js");
 
 async function fetchGithubUser(login) {
-  const res = await fetch(`https://api.github.com/users/${encodeURIComponent(login)}`, {
-    headers: {
-      "Authorization": `Bearer ${process.env.GITHUB_TOKEN}`,
-      "Accept": "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "crashvault-app"
-    }
-  });
+  const headers = {
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "crashvault-app"
+  };
+  if (process.env.GITHUB_TOKEN) headers["Authorization"] = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const res = await fetch(`https://api.github.com/users/${encodeURIComponent(login)}`, { headers });
   if (res.status === 404) { const e = new Error("GitHub-User existiert nicht"); e.status = 404; throw e; }
   if (!res.ok) { const e = new Error(`GitHub API ${res.status}`); e.status = 502; throw e; }
   return res.json();

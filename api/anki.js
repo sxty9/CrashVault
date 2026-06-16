@@ -10,7 +10,7 @@
 const crypto = require("crypto");
 const initSqlJs = require("sql.js/dist/sql-asm.js");
 const JSZip = require("jszip");
-const gh = require("./_github.js");
+const gh = require("./_store.js");
 const auth = require("./_auth.js");
 
 let sqlPromise = null;

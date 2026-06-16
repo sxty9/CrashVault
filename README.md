@@ -8,7 +8,8 @@ Modulares Lern-Cockpit für Klausurvorbereitung.
   - **Themenliste** — Klausurthemen mit Quellenangabe, Notizen, Dateianhängen und Anki-Karteikarten je Thema
   - **Sprücheliste** — Merksätze / „Ludolph-Sprüche" mit Anki-Export (Front/Back-Split)
 - **Accounts + Vaults** — Login (JWT/bcrypt), beliebig viele teilbare Vaults pro User (User → Vault → Modul → Tile)
-- **Storage** = direkt im GitHub-Repo (`vaults/<vid>/modules/<mid>/data.js` + `…/files/…`)
+- **Storage** = Server-Dateisystem unter `/var/lib/crashvault` (plain JSON +
+  hochgeladene Dateien). Das Repo enthält nur Code; alle Nutzdaten liegen auf dem Server.
 - **Hosting** = einzelner Node-Prozess (`server.js`), self-hosted hinter Cloudflare Tunnel
 - **Anki .apkg**-Export + bidirektionaler AnkiConnect-Sync
 
@@ -25,36 +26,40 @@ CrashVault/
 │   ├── topic-list.js           Themenliste-Kachelklasse
 │   └── spruch-list.js          Sprücheliste-Kachelklasse
 ├── api/
-│   ├── _github.js              GitHub-API-Helpers
+│   ├── _store.js               Dateisystem-Persistenz (/var/lib/crashvault)
+│   ├── _auth.js                Auth (JWT/bcrypt) + Vault-Guards
 │   ├── registry.js             GET/POST registry (Modul-Liste)
 │   ├── data.js                 GET/POST per-Modul-Daten
 │   ├── upload.js               Binär-Upload für Anhänge
 │   ├── file.js                 Datei-Download
 │   ├── files.js                Datei-Liste pro Modul
 │   └── anki.js                 .apkg-Generator (sql.js + JSZip)
-├── modules/
-│   ├── registry.js             Modul-Registry (auto-generated)
-│   └── <id>/
-│       ├── data.js             Modul-State (auto-generated, enthält tiles[])
-│       └── files/…             Anhänge dieses Moduls
 └── scripts/
-    └── migrate-bwl.js          BWL-Repo → CrashVault-Modul
+    ├── migrate-bwl.js          BWL-Repo → CrashVault-Modul (Alt-Import)
+    └── migrate-to-disk.js      Einmalige Migration Repo → /var/lib/crashvault
+
+# Nutzdaten (NICHT im Repo) — auf dem Server unter /var/lib/crashvault:
+#   accounts.json · users/<uid>/settings.json
+#   vaults/index.json · vaults/<vid>/config.json
+#   vaults/<vid>/modules/registry.json
+#   vaults/<vid>/modules/<mid>/data.json + files/<Kategorie?>/<datei>
 ```
 
 ### Datenmodell
 
-**Registry** (`modules/registry.js`):
+Alle Dateien sind **plain JSON** auf der Server-Platte (kein `window.*`-Wrapper;
+das Frontend lädt ausschließlich über `/api/*`).
+
+**Registry** (`vaults/<vid>/modules/registry.json`):
 
 ```js
-window.CRASHVAULT_REGISTRY = {
-  modules: [ { id, name, color, createdAt }, … ]
-}
+{ modules: [ { id, name, color, createdAt }, … ] }
 ```
 
-**Pro Modul** (`modules/<id>/data.js`):
+**Pro Modul** (`vaults/<vid>/modules/<mid>/data.json`):
 
 ```js
-window.CRASHVAULT_MODULE = {
+{
   id, name,
   tiles: [
     {
@@ -110,10 +115,8 @@ Auto-Deploy via self-hosted GitHub-Runner) steht in
 
 **Environment-Variablen** (im `.env`, Vorlage `.env.example`):
 
-- `GITHUB_TOKEN` — Personal Access Token, Contents = Read+Write auf das Repo.
-- `GITHUB_OWNER` — `sxty9`.
-- `GITHUB_REPO` — `CrashVault`.
-- `GITHUB_BRANCH` — `main`.
+- `CRASHVAULT_DATA_DIR` — Datenwurzel auf der Platte (optional, Default
+  `/var/lib/crashvault`).
 - `JWT_SECRET` — mind. 32 Zeichen Zufall (`openssl rand -hex 32`). Ändern =
   alle Sessions raus.
 - `PORT` — `29927` (`crc32("CrashVault") % 39151 + 10000`; nur an `127.0.0.1`
@@ -145,7 +148,7 @@ Das Skript
 ## Lokal entwickeln
 
 ```bash
-cp .env.example .env   # ausfüllen (GITHUB_TOKEN, JWT_SECRET, …)
+cp .env.example .env   # ausfüllen (JWT_SECRET, …)
 npm ci
 npm start              # = node server.js → http://127.0.0.1:29927
 ```
