@@ -49,14 +49,26 @@ Schema (module_id ODER new_module_name gesetzt, das andere null):
 
 module.exports = async (req, res) => {
   try {
-    if (req.method !== "POST") {
-      res.setHeader("Allow", "POST");
-      return store.sendJson(res, 405, { error: "Method not allowed" });
-    }
     const url = new URL(req.url, `http://${req.headers.host || "x"}`);
     const vaultId = url.searchParams.get("vault");
-    const name = sanitizeName(url.searchParams.get("name"));
     if (!store.validVaultId(vaultId)) return store.sendJson(res, 400, { error: "vault query param invalid" });
+
+    // GET → init payload for the import UI: categories + current modules.
+    if (req.method === "GET") {
+      await auth.requireVaultMember(req, vaultId);
+      const registry = store.readRegistry(vaultId) || { modules: [] };
+      return store.sendJson(res, 200, {
+        categories: cats.CATEGORIES,
+        modules: registry.modules.map(m => ({ id: m.id, name: m.name })),
+        threshold: cats.CONFIDENCE_THRESHOLD
+      });
+    }
+
+    if (req.method !== "POST") {
+      res.setHeader("Allow", "GET, POST");
+      return store.sendJson(res, 405, { error: "Method not allowed" });
+    }
+    const name = sanitizeName(url.searchParams.get("name"));
     await auth.requireVaultMember(req, vaultId);
 
     const chunks = [];

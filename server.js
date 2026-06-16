@@ -81,6 +81,7 @@ const STATIC_EXACT = {
   "/":             "index.html",
   "/index.html":   "index.html",
   "/vault.html":   "vault.html",
+  "/import.html":  "import.html",
   "/module.html":  "module.html",
   "/favicon.ico":  "favicon.ico"
 };

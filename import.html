@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrashVault — Material-Import</title>
+<link rel="stylesheet" href="/assets/style.css">
+<style>
+  main.import { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  .dropzone {
+    border: 2px dashed var(--line, #cbd5e1); border-radius: 14px; padding: 34px 20px;
+    text-align: center; color: var(--muted, #64748b); cursor: pointer; transition: .15s;
+    background: var(--paper-2, rgba(148,163,184,.06));
+  }
+  .dropzone.drag { border-color: #38bdf8; background: rgba(56,189,248,.08); color: #0f172a; }
+  .dropzone b { color: var(--ink, #0f172a); }
+  table.queue { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 13px; }
+  table.queue th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+    color: var(--muted, #64748b); padding: 6px 8px; border-bottom: 1px solid var(--line, #e2e8f0); }
+  table.queue td { padding: 7px 8px; border-bottom: 1px solid var(--line, #eef2f7); vertical-align: middle; }
+  table.queue tr.done td { opacity: .55; }
+  table.queue select, table.queue input[type=text] { width: 100%; box-sizing: border-box; padding: 5px 7px; font-size: 13px; }
+  .fname { font-weight: 600; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fmeta { font-size: 11px; color: var(--muted, #64748b); }
+  .conf { display: inline-block; min-width: 42px; text-align: center; padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .conf.hi { background: #dcfce7; color: #166534; } .conf.mid { background: #fef9c3; color: #854d0e; } .conf.lo { background: #fee2e2; color: #991b1b; }
+  .why { cursor: help; color: var(--muted, #64748b); }
+  .rowstatus { font-size: 12px; color: var(--muted, #64748b); }
+  .rowstatus.err { color: var(--danger, #dc2626); }
+  .newmod { margin-top: 4px; }
+  .commitbar { position: sticky; bottom: 0; margin-top: 18px; padding: 12px 4px; display: flex; align-items: center; gap: 14px;
+    background: linear-gradient(transparent, var(--paper, #fff) 30%); }
+  .commitbar .sum { color: var(--muted, #64748b); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="crumbs">
+    <a href="/">⚡ CrashVault</a>
+    <span class="sep">›</span>
+    <a id="crumbVault" href="#">…</a>
+    <span class="sep">›</span>
+    <span class="here">Material-Import</span>
+  </div>
+  <div class="toolbar">
+    <span class="status-pill" id="aiPill" title="Claude-Status">KI…</span>
+  </div>
+</header>
+
+<main class="import">
+  <p class="intro">Lade Vorlesungsmaterial (PDF, Folien, Docs, Bilder) hoch. Claude analysiert jede Datei,
+  schlägt <b>Modul</b> und <b>Kategorie</b> vor — du prüfst, korrigierst und übernimmst. Hohe Trefferquote ist vorausgewählt.</p>
+
+  <div class="dropzone" id="dz">
+    <div style="font-size:30px;line-height:1">📥</div>
+    <div><b>Dateien hierher ziehen</b> oder klicken zum Auswählen</div>
+    <div class="fmeta" style="margin-top:6px">max. 50 MB pro Datei · mehrere gleichzeitig möglich</div>
+  </div>
+  <input type="file" id="fileInput" multiple style="display:none">
+
+  <table class="queue" id="queue" style="display:none">
+    <thead><tr>
+      <th style="width:30px">✓</th><th>Datei</th><th style="width:190px">Modul</th>
+      <th style="width:170px">Kategorie</th><th style="width:220px">Name</th><th style="width:120px">Confidence</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <div class="commitbar" id="commitbar" style="display:none">
+    <button class="primary" id="btnCommit">Übernehmen</button>
+    <span class="sum" id="sum"></span>
+    <a href="#" id="backLink" style="margin-left:auto;font-size:13px">← zurück zum Vault</a>
+  </div>
+</main>
+
+<script src="/assets/util.js"></script>
+<script>
+"use strict";
+const { $, api, apiJson, apiPostJson, toast, escapeText } = window.CV;
+
+const params = new URLSearchParams(location.search);
+const vaultId = params.get("vault");
+if (!vaultId) { alert("Vault-ID fehlt."); location.href = "/"; }
+const vaultHref = `/vault.html?id=${encodeURIComponent(vaultId)}`;
+$("#crumbVault").href = vaultHref;
+$("#backLink").href = vaultHref;
+
+let CATS = [];     // [{name, desc}]
+let MODULES = [];  // [{id, name}]
+let THRESHOLD = 0.65;
+const MAX_PARALLEL = 3;
+let rowSeq = 0;
+
+window.addEventListener("crashvault:auth-expired", () => { location.href = "/"; });
+
+async function init() {
+  try {
+    const j = await apiJson(`/api/ingest?vault=${encodeURIComponent(vaultId)}`);
+    CATS = j.categories || []; MODULES = j.modules || []; THRESHOLD = j.threshold || 0.65;
+    $("#aiPill").textContent = "● KI bereit"; $("#aiPill").className = "status-pill ok";
+  } catch (e) {
+    if (e.status === 401) return; // api() already routed to login
+    $("#aiPill").textContent = "● KI: " + (e.message || "Fehler"); $("#aiPill").className = "status-pill err";
+    toast("Konnte Import nicht initialisieren: " + e.message, "err");
+  }
+}
+
+// ---- dropzone wiring ----
+const dz = $("#dz"), fileInput = $("#fileInput");
+dz.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => { handleFiles([...fileInput.files]); fileInput.value = ""; });
+["dragenter", "dragover"].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add("drag"); }));
+["dragleave", "drop"].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove("drag"); }));
+dz.addEventListener("drop", e => { if (e.dataTransfer && e.dataTransfer.files) handleFiles([...e.dataTransfer.files]); });
+
+function confClass(c) { return c >= 0.8 ? "hi" : c >= THRESHOLD ? "mid" : "lo"; }
+
+function moduleOptions(selId, isNew) {
+  let html = MODULES.map(m => `<option value="${escapeText(m.id)}"${m.id === selId && !isNew ? " selected" : ""}>${escapeText(m.name)}</option>`).join("");
+  html += `<option value="__new__"${isNew ? " selected" : ""}>＋ Neues Modul…</option>`;
+  return html;
+}
+function catOptions(sel) {
+  return CATS.map(c => `<option value="${escapeText(c.name)}"${c.name === sel ? " selected" : ""} title="${escapeText(c.desc)}">${escapeText(c.name)}</option>`).join("");
+}
+
+function handleFiles(files) {
+  if (!files.length) return;
+  $("#queue").style.display = ""; $("#commitbar").style.display = "";
+  const tasks = files.map(file => {
+    const row = makeRow(file);
+    return () => ingestOne(row);
+  });
+  runPool(tasks, MAX_PARALLEL).then(updateSummary);
+}
+
+function makeRow(file) {
+  const id = "r" + (++rowSeq);
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td><input type="checkbox" class="acc" disabled></td>
+    <td><div class="fname" title="${escapeText(file.name)}">${escapeText(file.name)}</div>
+        <div class="fmeta">${(file.size/1024).toFixed(0)} KB</div></td>
+    <td colspan="4"><span class="rowstatus">In Warteschlange…</span></td>`;
+  $("#rows").appendChild(tr);
+  return { id, file, tr, proposal: null, failed: false };
+}
+
+function setRowStatus(row, text, err) {
+  const cell = row.tr.querySelector("td:last-child");
+  // when still in the 3-col-merged state
+  const st = row.tr.querySelector(".rowstatus");
+  if (st) { st.textContent = text; st.className = "rowstatus" + (err ? " err" : ""); }
+}
+
+async function ingestOne(row) {
+  setRowStatus(row, "Analysiere… ⏳");
+  try {
+    const res = await api(`/api/ingest?vault=${encodeURIComponent(vaultId)}&name=${encodeURIComponent(row.file.name)}`, {
+      method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: row.file
+    });
+    row.proposal = await res.json();
+    fillRow(row);
+  } catch (e) {
+    if (e.status === 401) return;
+    row.failed = true;
+    setRowStatus(row, "Fehler: " + (e.message || e), true);
+  }
+  updateSummary();
+}
+
+function fillRow(row) {
+  const p = row.proposal;
+  const isNew = !p.proposedModuleId;
+  const c = Math.round((p.confidence || 0) * 100);
+  row.tr.innerHTML = `
+    <td><input type="checkbox" class="acc" ${p.needsReview ? "" : "checked"}></td>
+    <td><div class="fname" title="${escapeText(p.name)}">${escapeText(p.name)}</div>
+        <div class="fmeta">${(row.file.size/1024).toFixed(0)} KB · ${escapeText(p.extractor || "")}${p.note ? " · " + escapeText(p.note) : ""}</div></td>
+    <td><select class="mod">${moduleOptions(p.proposedModuleId, isNew)}</select>
+        <input type="text" class="newmod" placeholder="Name des neuen Moduls" style="display:none" value="${escapeText(p.newModuleName || "")}"></td>
+    <td><select class="cat">${catOptions(p.proposedCategory)}</select></td>
+    <td><input type="text" class="nm" value="${escapeText(p.suggestedName || p.name)}"></td>
+    <td><span class="conf ${confClass(p.confidence)}">${c}%</span>
+        <span class="why" title="${escapeText(p.reasoning || "")}">ⓘ</span></td>`;
+  // Stash the bits commit() needs directly on the <tr>.
+  row.tr._token = p.token; row.tr._confidence = p.confidence; row.tr._autoAccepted = !p.needsReview;
+  const modSel = row.tr.querySelector(".mod"), newInp = row.tr.querySelector(".newmod");
+  function syncNew() { newInp.style.display = modSel.value === "__new__" ? "" : "none"; }
+  modSel.addEventListener("change", syncNew); syncNew();
+  row.tr.querySelector(".acc").addEventListener("change", updateSummary);
+}
+
+function acceptedRows() {
+  return [...$("#rows").children].map(tr => tr).filter(tr => {
+    const acc = tr.querySelector(".acc");
+    return acc && acc.checked && tr.querySelector(".mod");
+  });
+}
+function updateSummary() {
+  const n = acceptedRows().length;
+  $("#sum").textContent = n ? `${n} Datei(en) ausgewählt` : "Nichts ausgewählt";
+  $("#btnCommit").disabled = !n;
+}
+
+async function commit() {
+  const trs = acceptedRows();
+  if (!trs.length) return;
+  $("#btnCommit").disabled = true; $("#btnCommit").textContent = "Übernehme…";
+  const payload = trs.map(tr => {
+    const mod = tr.querySelector(".mod").value;
+    const isNew = mod === "__new__";
+    return {
+      token: tr._token,
+      targetModuleId: isNew ? null : mod,
+      newModuleName: isNew ? tr.querySelector(".newmod").value.trim() : null,
+      category: tr.querySelector(".cat").value,
+      finalName: tr.querySelector(".nm").value.trim(),
+      confidence: tr._confidence,
+      autoAccepted: tr._autoAccepted
+    };
+  }).filter(it => it.token && (it.targetModuleId || it.newModuleName) && it.finalName);
+
+  try {
+    const r = await apiPostJson(`/api/ingest-commit?vault=${encodeURIComponent(vaultId)}`, { items: payload });
+    const placedTokens = new Set((r.items || []).map(i => i.token));
+    for (const tr of trs) {
+      if (placedTokens.has(tr._token)) {
+        tr.classList.add("done");
+        tr.querySelector(".acc").checked = false; tr.querySelector(".acc").disabled = true;
+      }
+    }
+    let msg = `${r.placed} Datei(en) übernommen`;
+    if (r.modulesCreated) msg += `, ${r.modulesCreated} neues Modul`;
+    if (r.errors && r.errors.length) msg += `, ${r.errors.length} Fehler`;
+    toast(msg, r.errors && r.errors.length ? "err" : "ok");
+    updateSummary();
+  } catch (e) {
+    toast("Übernehmen fehlgeschlagen: " + e.message, "err");
+  } finally {
+    $("#btnCommit").textContent = "Übernehmen"; updateSummary();
+  }
+}
+$("#btnCommit").addEventListener("click", commit);
+
+async function runPool(tasks, n) {
+  const q = tasks.slice();
+  await Promise.all(Array.from({ length: Math.min(n, q.length) }, async () => {
+    while (q.length) { const t = q.shift(); await t(); }
+  }));
+}
+
+init();
+</script>
+</body>
+</html>
